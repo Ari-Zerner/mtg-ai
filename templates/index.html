@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>MTG Deck Advisor</title>
+    <style>
+      .loading {
+        display: none;
+      }
+      .loading.active {
+        display: block;
+      }
+      textarea {
+        width: 100%;
+        height: 200px;
+      }
+      .output {
+        margin-top: 20px;
+        padding: 10px;
+        border: 1px solid #ccc;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>MTG Deck Advisor</h1>
+    <form
+      method="POST"
+      onsubmit="document.querySelector('.loading').classList.add('active')"
+    >
+      <div>
+        <label for="decklist">Decklist:</label><br />
+        <textarea name="decklist" required>
+{{ request.form.decklist if request.form.decklist else '' }}</textarea
+        >
+      </div>
+      <div>
+        <label for="format">Format:</label><br />
+        <input type="text" name="format" value="Brawl" />
+      </div>
+      <div>
+        <label for="additional_info">Additional Info:</label><br />
+        <textarea name="additional_info">
+{{ request.form.additional_info if request.form.additional_info else '' }}</textarea
+        >
+      </div>
+      <div class="loading">Analyzing deck... Please wait...</div>
+      <button type="submit">Get Advice</button>
+    </form>
+
+    {% if advice %}
+    <div class="output">{{ advice|safe }}</div>
+    {% endif %}
+  </body>
+</html>
