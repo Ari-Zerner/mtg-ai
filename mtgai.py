@@ -263,7 +263,7 @@ def get_all_card_descriptions(decklist_text):
     logger.debug(f"Combined {len(descriptions)} card descriptions")
     return "\n\n".join(descriptions)
 
-def get_deck_advice(decklist_text, format=None, additional_info=None):
+def get_deck_advice(decklist_text, mode="cheaper", format=None, additional_info=None):
     """
     Gets AI advice on how to improve a decklist by first enriching it with card descriptions
     and then asking for recommendations.
@@ -279,20 +279,24 @@ def get_deck_advice(decklist_text, format=None, additional_info=None):
         requests.exceptions.RequestException: If any Scryfall API requests fail
         ValueError: If no cards are found
     """
+    modes = ["cheaper", "better"]
+    if mode not in modes:
+        raise ValueError(f"Invalid mode: {mode}. Please choose from: {modes}")
+    
     logger.info("Getting deck improvement advice")
     # First get descriptions for all cards
     card_descriptions = get_all_card_descriptions(decklist_text)
         
-    prompt = f"""You are an expert Magic: The Gathering deck builder and advisor.
+    system_prompt = f"""You are an expert Magic: The Gathering deck builder and advisor.
     You will be given a decklist, along with descriptions of the cards in the deck.
     Read the decklist and card descriptions carefully, noting card quantities when relevant and considering the reason each card is in the deck.
     Your task is to analyze the deck's strategy and provide specific advice on how to improve it.
-    Consider aspects like mana curve, synergies between cards, potential weaknesses, and suggest specific cards to add or remove.
-    Try to balance the amount of cards you suggest adding and removing, so that the size of the deck doesn't change.
+    Consider aspects like mana curve, overall gameplan, synergies between cards, and potential weaknesses.
+    Unless instrtucted otherwise, aim to balance suggestions for cutting and adding cards so that the size of the deck doesn't change.
     Provide reasoning for your suggestions so that players can learn from your advice.
+    """
     
-    
-    Here are the descriptions of the cards in the deck:
+    user_prompt = f"""Here are the descriptions of the cards in the deck:
     {card_descriptions}
     
     
@@ -300,19 +304,26 @@ def get_deck_advice(decklist_text, format=None, additional_info=None):
     {decklist_text}"""
     
     if format:
-        prompt += f"\n\nThe decklist is for the {format} format. Consider the rules of {format} when evaluating the deck, and only suggest adding cards that are legal in {format}. Assume that the current decklist is already legal in {format}."
+        user_prompt += f"\n\nThe decklist is for the {format} format. Consider the rules of {format} when evaluating the deck, and only suggest adding cards that are legal in {format}. Assume that the current decklist is already legal in {format}."
         if format.lower() == "brawl":
-            prompt += "\nRemember the rules of Brawl (formerly known as Historic Brawl): 2 players, 100-card singleton decks with commanders, restricted to commander's color identity, 25 starting life, using cards from Magic: The Gathering Arena."
+            user_prompt += "\nRemember the rules of Brawl (formerly known as Historic Brawl): 2 players, 100-card singleton decks with commanders, restricted to commander's color identity, 25 starting life, using cards from Magic: The Gathering Arena."
     
     if additional_info:
-        prompt += f"\n\nHere is additional information about the deck:\n{additional_info}"
+        user_prompt += f"\n\nHere is additional information about the deck:\n{additional_info}"
     
     logger.debug("Making OpenAI API call for deck advice")
-    response = openai.chat.completions.create(
-        model="o1-preview",
-        messages=[
-            {"role": "user", "content": prompt}
+    if mode == "cheaper":
+        model = "gpt-4o"
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
         ]
+    elif mode == "better":
+        model = "o1-preview"
+        messages = [{"role": "user", "content": f"{system_prompt}\n\n\n{user_prompt}"}]
+    response = openai.chat.completions.create(
+        model=model,
+        messages=messages
     )
     logger.debug("Successfully received deck advice from OpenAI")
     return response.choices[0].message.content

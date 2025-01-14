@@ -33,16 +33,23 @@
         >
       </div>
       <div>
-        <label for="format">Format:</label><br />
-        <input type="text" name="format" value="Brawl" />
+        <label for="format">Format (e.g. EDH):</label><br />
+        <input type="text" name="format" />
       </div>
       <div>
-        <label for="additional_info">Additional Info:</label><br />
+        <label for="additional_info">Additional Info (optional):</label><br />
         <textarea name="additional_info">
 {{ request.form.additional_info if request.form.additional_info else '' }}</textarea
         >
       </div>
       <div class="loading">Analyzing deck... Please wait...</div>
+      <div>
+        <label>Mode:</label><br />
+        <input type="radio" id="cheaper" name="mode" value="cheaper" checked>
+        <label for="cheaper">Cheaper</label>
+        <input type="radio" id="better" name="mode" value="better">
+        <label for="better">Better</label>
+      </div>
       <button type="submit">Get Advice</button>
     </form>
 
