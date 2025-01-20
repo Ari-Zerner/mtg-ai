@@ -85,6 +85,7 @@ def generate_card_description(card_name):
     You don't interpret the card, you just put the information in plain text.
     You are as concise as possible and don't need to use full sentences or proper grammar.
     You always provide all functional information about the card, even if this risks including a small amount of irrelevant information.
+    If a card has two faces, you separate the two faces with a double slash (//). A card's description never includes a double newline.
     
     Example outputs:
     
@@ -123,6 +124,17 @@ def generate_card_description(card_name):
     4/3
     Trample
     Whenever you cast a spell, Belligerent Regisaur gains indestructible until end of turn.
+    
+    
+    Razorgrass Ambush
+    {1}{W}
+    Instant
+    Razorgrass Ambush deals 3 damage to target attacking or blocking creature.
+    //
+    Razorgrass Field
+    Land
+    As Razorgrass Field enters, you may pay 3 life. If you don't, it enters tapped.
+    {T}: Add {W}.
     """
     
     logger.debug("Making OpenAI API call for card description")
