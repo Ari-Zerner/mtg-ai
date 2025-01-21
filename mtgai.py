@@ -1,3 +1,4 @@
+import json
 import requests
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -25,7 +26,7 @@ def env_var(name):
 
 load_dotenv()
 logger.info("Loading environment variables")
-OPENAI_API_KEY = env_var("OPENAI_API_KEY")
+DEEPSEEK_API_KEY = env_var("DEEPSEEK_API_KEY")
 MONGO_URI = env_var("MONGO_URI")
 
 def get_card_json(card_name):
@@ -55,7 +56,7 @@ def get_card_json(card_name):
     logger.debug(f"Found {data['total_cards']} matching cards")    
     return data["data"][0]
 
-openai = OpenAI(api_key=OPENAI_API_KEY)
+openai = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com/")
 
 def generate_card_description(card_json):
     """
@@ -137,7 +138,7 @@ def generate_card_description(card_json):
     logger.debug("Making OpenAI API call for card description")
     # Get description from GPT
     response = openai.chat.completions.create(
-        model="gpt-4o-mini",
+        model="deepseek-chat",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"{card_json}"}
@@ -226,23 +227,20 @@ def extract_card_names(decklist_text):
     system_prompt = """You are an automatic system that extracts card names from Magic: The Gathering decklists.
     You understand common Magic deck formats.
     Given a decklist that may contain extraneous information, extract just the name of each card.
-    Return the result as a JSON array of strings, where each string is a card name.
+    Return the result as a JSON object with a single field, "card_names", which is an array of strings, where each string is a card name.
     """
     
-    class ResponseFormat(BaseModel):
-        card_names: list[str]
-    
-    logger.debug("Making OpenAI API call to parse decklist")    
-    response = openai.beta.chat.completions.parse(
-        model="gpt-4o-mini",
+    logger.debug("Making OpenAI API call to parse decklist")
+    response = openai.chat.completions.create(
+        model="deepseek-chat",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": decklist_text}
         ],
         temperature=0.1,
-        response_format=ResponseFormat
+        response_format={'type': 'json_object'}
     )
-    card_names = response.choices[0].message.parsed.card_names
+    card_names = json.loads(response.choices[0].message.content)["card_names"]
     logger.debug(f"Extracted {len(card_names)} card names from decklist")
     return card_names
 
@@ -261,16 +259,18 @@ def evaluate_potential_addition(strategy, card_description):
     You will be given a deck's strategy and a card's description.
     Read the deck's strategy and the card's description carefully.
     Your task is to rate the card's potential usefulness to the deck, on a scale of 1 (worst) to 100 (best).
+    Output your score as a JSON object with a single field, "score".
+    Example output:
+    {"score": 42}
     """
-    class ResponseFormat(BaseModel):
-        score: int
-    response = openai.beta.chat.completions.parse(
-        model="gpt-4o-mini",
+    logger.debug(f"Evaluating potential addition: {card_description.splitlines()[0]}")
+    response = openai.chat.completions.create(
+        model="deepseek-chat",
         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Strategy:\n{strategy}\n\nCard description:\n{card_description}"}],
         temperature=0.1,
-        response_format=ResponseFormat
+        response_format={'type': 'json_object'}
     )
-    return response.choices[0].message.parsed.score
+    return json.loads(response.choices[0].message.content)["score"]
 
 def get_potential_additions(current_deck_prompt, current_deck_cards):
     """
@@ -293,21 +293,19 @@ def get_potential_additions(current_deck_prompt, current_deck_cards):
     Be sure to consider any additional information provided, and how it should affect both your description of the deck's strategy and the search queries.
     Your output should be a JSON object with two fields:
     - strategy: A summary of the deck's strategy and what kinds of cards might make for good additions
-    - queries: A list of Scryfall search queries
+    - queries: A list of strings where each string is a Scryfall search query
     """
     logger.info("Generating potential additions to decklist")
-    class ResponseFormat(BaseModel):
-        strategy: str
-        queries: list[str]
     
-    response = openai.beta.chat.completions.parse(
-        model="gpt-4o",
+    response = openai.chat.completions.create(
+        model="deepseek-chat",
         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": current_deck_prompt}],
         temperature=0.1,
-        response_format=ResponseFormat
+        response_format={'type': 'json_object'}
     )
-    strategy = response.choices[0].message.parsed.strategy
-    queries = response.choices[0].message.parsed.queries
+    response_json = json.loads(response.choices[0].message.content)
+    strategy = response_json["strategy"]
+    queries = response_json["queries"]
     cards = {}
     for query in queries:
         try:
@@ -398,18 +396,12 @@ def get_deck_advice(decklist_text, mode="cheaper", format=None, additional_info=
         user_prompt += f"\n\nHere are some cards that might be good additions to the deck:\n{card_separator.join(potential_additions)}"
     
     logger.debug("Making OpenAI API call for deck advice")
-    if mode == "cheaper":
-        model = "gpt-4o"
-        messages = [
+    response = openai.chat.completions.create(
+        model="deepseek-reasoner" if mode == "better" else "deepseek-chat",
+        messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
-    elif mode == "better":
-        model = "o1-preview"
-        messages = [{"role": "user", "content": f"{system_prompt}\n\n\n{user_prompt}"}]
-    response = openai.chat.completions.create(
-        model=model,
-        messages=messages
     )
     logger.debug("Successfully received deck advice from OpenAI")
     return response.choices[0].message.content
