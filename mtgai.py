@@ -405,9 +405,3 @@ def get_deck_advice(decklist_text, mode="cheaper", format=None, additional_info=
     )
     logger.debug("Successfully received deck advice from OpenAI")
     return response.choices[0].message.content
-
-if __name__ == "__main__":
-    logger.info('Loading decklist')
-    teferi_decklist = open("Teferi Deck.txt", "r").read()
-    logger.info("Starting deck analysis")
-    print(get_deck_advice(teferi_decklist, format="Brawl", additional_info="This deck may not contain creatures."))
