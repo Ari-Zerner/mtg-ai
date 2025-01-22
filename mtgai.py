@@ -186,7 +186,7 @@ def get_potential_additions(current_deck_prompt, current_deck_cards):
     logger.info("Generating potential additions to decklist")
     
     response = openai.chat.completions.create(
-        model="deepseek-chat",
+        model="deepseek-reasoner",
         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": current_deck_prompt}],
         temperature=0.1,
         response_format={'type': 'json_object'}
@@ -229,7 +229,7 @@ def get_potential_additions(current_deck_prompt, current_deck_cards):
             descriptions.append(descriptions_dict[card_name])
     return descriptions
 
-def get_deck_advice(decklist_text, mode="cheaper", format=None, additional_info=None):
+def get_deck_advice(decklist_text, format=None, additional_info=None):
     """
     Gets AI advice on how to improve a decklist by first enriching it with card descriptions
     and then asking for recommendations.
@@ -245,10 +245,6 @@ def get_deck_advice(decklist_text, mode="cheaper", format=None, additional_info=
         requests.exceptions.RequestException: If any Scryfall API requests fail
         ValueError: If no cards are found
     """
-    modes = ["cheaper", "better"]
-    if mode not in modes:
-        raise ValueError(f"Invalid mode: {mode}. Please choose from: {modes}")
-    
     logger.info("Getting deck improvement advice")
     # First get descriptions for all cards
     decklist_cards = extract_card_names(decklist_text)
@@ -285,7 +281,7 @@ def get_deck_advice(decklist_text, mode="cheaper", format=None, additional_info=
     
     logger.debug("Making OpenAI API call for deck advice")
     response = openai.chat.completions.create(
-        model="deepseek-reasoner" if mode == "better" else "deepseek-chat",
+        model="deepseek-reasoner",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
