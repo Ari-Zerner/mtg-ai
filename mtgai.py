@@ -29,133 +29,15 @@ logger.info("Loading environment variables")
 DEEPSEEK_API_KEY = env_var("DEEPSEEK_API_KEY")
 MONGO_URI = env_var("MONGO_URI")
 
-def get_card_json(card_name):
-    """
-    Search for a card using the Scryfall API and return the first result
-    
-    Args:
-        card_name (str): Name of the card to search for
-        
-    Returns:
-        dict: Card data from Scryfall API
-        
-    Raises:
-        requests.exceptions.RequestException: If the API request fails
-        ValueError: If no cards are found
-    """
-    logger.info(f"Searching Scryfall for card: {card_name}")
-    url = f"https://api.scryfall.com/cards/named?fuzzy={card_name}"
-    response = requests.get(url)
-    response.raise_for_status()
-    
-    data = response.json()
-    if data["total_cards"] == 0:
-        logger.error(f"No cards found matching: {card_name}")
-        raise ValueError(f"No cards found matching '{card_name}'")
-    
-    logger.debug(f"Found {data['total_cards']} matching cards")    
-    return data["data"][0]
-
 openai = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com/")
 
-def generate_card_description(card_json):
-    """
-    Get a natural language description of a Magic card's functional aspects using GPT-4
-    
-    Args:
-        card_name (str): Name of the card to describe
-        
-    Returns:
-        str: Natural language description of the card's functionality
-        
-    Raises:
-        requests.exceptions.RequestException: If the Scryfall API request fails
-        ValueError: If no cards are found
-        openai.OpenAIError: If the OpenAI API request fails
-    """
-    logger.info(f"Generating description for card: {card_json['name']}")
-    
-    # Construct prompt for GPT
-    system_prompt = """You are an automatic system that parses JSON representations of Magic: The Gathering cards.
-    You return plain text detailing all mechanics of the card, and no other information.
-    You are familiar with concise representations of card mechanics such as mana symbols.
-    Your knowledge of the rules enables you to understand which information is relevant based on the card.
-    You don't interpret the card, you just put the information in plain text.
-    You are as concise as possible and don't need to use full sentences or proper grammar.
-    You always provide all functional information about the card, even if this risks including a small amount of irrelevant information.
-    If a card has two faces, you separate the two faces with a double slash (//). A card's description never includes a double newline.
-    
-    Example outputs:
-    
-    
-    Lightning Bolt
-    {R}
-    Instant
-    Deal 3 damage to any target.
-    
-    
-    Baleful Strix
-    {U}{B}
-    Artifact Creature - Bird
-    1/1
-    Flying, deathtouch
-    When Baleful Strix enters, draw a card.
-    
-    
-    Teferi, Hero of Dominaria
-    {3}{W}{U}
-    Legendary Planeswalker - Teferi
-    Loyalty: 4
-    +1: Draw a card. At the beginning of the next end step, untap up to two lands.
-    -3: Put target nonland permanent into its owner's library third from the top.
-    -8: You get an emblem with "Whenever you draw a card, exile target permanent an opponent controls."
-
-
-    Invasion of Ixalan
-    {1}{G}
-    Battle — Siege
-    Defense: 4
-    When Invasion of Ixalan enters, look at the top five cards of your library. You may reveal a permanent card from among them and put it into your hand. Put the rest on the bottom of your library in a random order.
-    //
-    Belligerent Regisaur
-    Creature — Dinosaur
-    4/3
-    Trample
-    Whenever you cast a spell, Belligerent Regisaur gains indestructible until end of turn.
-    
-    
-    Razorgrass Ambush
-    {1}{W}
-    Instant
-    Razorgrass Ambush deals 3 damage to target attacking or blocking creature.
-    //
-    Razorgrass Field
-    Land
-    As Razorgrass Field enters, you may pay 3 life. If you don't, it enters tapped.
-    {T}: Add {W}.
-    """
-    
-    logger.debug("Making OpenAI API call for card description")
-    # Get description from GPT
-    response = openai.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"{card_json}"}
-        ],
-        temperature=0.1
-    )
-    logger.debug("Successfully received response from OpenAI")
-    return response.choices[0].message.content
-
-def get_card_descriptions_dict(card_names, name_to_json={}):
+def get_card_descriptions_dict(card_names):
     """
     Get natural language descriptions of Magic cards' functional aspects,
     first checking MongoDB in bulk and falling back to Scryfall+AI for missing cards.
     
     Args:
         card_names (list): List of card names to describe
-        name_to_json (dict): Optional dictionary mapping card names to their JSON representations, to avoid redundant Scryfall API requests
     Returns:
         dict: Dictionary mapping card names to their descriptions
         
@@ -168,7 +50,7 @@ def get_card_descriptions_dict(card_names, name_to_json={}):
     logger.info(f"Getting descriptions for {len(card_names)} cards")
     
     descriptions = {}
-    cards_to_generate = []
+    cards_to_get = []
     
     # Try to load from database first
     with pymongo.MongoClient(MONGO_URI, tlsCAFile=certifi.where()) as db:
@@ -186,20 +68,26 @@ def get_card_descriptions_dict(card_names, name_to_json={}):
             if name in existing_dict:
                 descriptions[name] = existing_dict[name]
             else:
-                cards_to_generate.append(name)
+                cards_to_get.append(name)
         
         # Generate missing descriptions
-        if cards_to_generate:
-            logger.debug(f"Generating {len(cards_to_generate)} new descriptions")
+        if cards_to_get:
+            logger.debug(f"Getting {len(cards_to_get)} new descriptions")
             new_descriptions = []
-            for name in cards_to_generate:
-                card_json = name_to_json.get(name) or get_card_json(name)
-                description = generate_card_description(card_json)
-                descriptions[name] = description
-                new_descriptions.append({
-                    "name": name,
-                    "description": description
-                })
+            for name in cards_to_get:
+                logger.debug(f"Searching Scryfall for card: {name}")
+                try:
+                    url = f"https://api.scryfall.com/cards/named?fuzzy={name}&format=text"
+                    response = requests.get(url)
+                    response.raise_for_status()
+                    description = response.text
+                    descriptions[name] = description
+                    new_descriptions.append({
+                        "name": name,
+                        "description": description
+                    })
+                except Exception as e:
+                    logger.error(f"Error searching Scryfall for card '{name}': {str(e)}")
             
             # Store new descriptions in bulk
             if new_descriptions:
@@ -324,7 +212,7 @@ def get_potential_additions(current_deck_prompt, current_deck_cards):
     for name in current_deck_cards:
         if name in cards:
             del cards[name]
-    descriptions_dict = get_card_descriptions_dict(list(cards.keys()), cards)
+    descriptions_dict = get_card_descriptions_dict(list(cards.keys()))
     # Sort cards by relevance using evaluate_potential_addition
     sorted_cards = []
     for card_name, description in descriptions_dict.items():
