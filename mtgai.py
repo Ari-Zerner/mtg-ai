@@ -1,9 +1,9 @@
 import json
-import requests
-from openai import OpenAI
+import aiohttp
+import asyncio
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import os
-from pydantic import BaseModel
 import pymongo
 import certifi
 import logging
@@ -31,9 +31,17 @@ DEEPSEEK_API_KEY = env_var("DEEPSEEK_API_KEY")
 MONGO_URI = env_var("MONGO_URI")
 USE_ONLY_CHEAP_MODEL = env_var("USE_ONLY_CHEAP_MODEL") == "true"
 
-openai = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com/")
+openai = AsyncOpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com/")
 
-def get_card_descriptions_dict(card_names):
+async def fetch_card_description(session, name):
+    """Helper function to fetch a single card description from Scryfall"""
+    logger.debug(f"Searching Scryfall for card: {name}")
+    url = f"https://api.scryfall.com/cards/named?fuzzy={name}&format=text"
+    async with session.get(url) as response:
+        response.raise_for_status()
+        return await response.text()
+
+async def get_card_descriptions_dict(card_names):
     """
     Get natural language descriptions of Magic cards' functional aspects,
     first checking MongoDB in bulk and falling back to Scryfall+AI for missing cards.
@@ -44,7 +52,7 @@ def get_card_descriptions_dict(card_names):
         dict: Dictionary mapping card names to their descriptions
         
     Raises:
-        requests.exceptions.RequestException: If any Scryfall API requests fail
+        aiohttp.ClientError: If any Scryfall API requests fail
         ValueError: If no cards are found
         openai.OpenAIError: If any OpenAI API requests fail
         pymongo.errors.PyMongoError: If database operations fail
@@ -76,20 +84,21 @@ def get_card_descriptions_dict(card_names):
         if cards_to_get:
             logger.debug(f"Getting {len(cards_to_get)} new descriptions")
             new_descriptions = []
-            for name in cards_to_get:
-                logger.debug(f"Searching Scryfall for card: {name}")
-                try:
-                    url = f"https://api.scryfall.com/cards/named?fuzzy={name}&format=text"
-                    response = requests.get(url)
-                    response.raise_for_status()
-                    description = response.text
-                    descriptions[name] = description
+            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as session:
+                tasks = []
+                for name in cards_to_get:
+                    tasks.append(asyncio.create_task(fetch_card_description(session, name)))
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                for name, result in zip(cards_to_get, results):
+                    if isinstance(result, Exception):
+                        logger.error(f"Error searching Scryfall for card '{name}': {str(result)}")
+                        continue
+                    descriptions[name] = result
                     new_descriptions.append({
                         "name": name,
-                        "description": description
+                        "description": result
                     })
-                except Exception as e:
-                    logger.error(f"Error searching Scryfall for card '{name}': {str(e)}")
             
             # Store new descriptions in bulk
             if new_descriptions:
@@ -98,7 +107,7 @@ def get_card_descriptions_dict(card_names):
     
     return descriptions
 
-def extract_card_names(decklist_text):
+async def extract_card_names(decklist_text):
     """
     Extract just the card names from a decklist text that may contain additional information.
     Uses GPT to parse and clean the decklist, removing set codes, collector numbers,
@@ -121,7 +130,7 @@ def extract_card_names(decklist_text):
     """
     
     logger.debug("Making OpenAI API call to parse decklist")
-    response = openai.chat.completions.create(
+    response = await openai.chat.completions.create(
         model="deepseek-chat",
         messages=[
             {"role": "system", "content": system_prompt},
@@ -134,7 +143,7 @@ def extract_card_names(decklist_text):
     logger.debug(f"Extracted {len(card_names)} card names from decklist")
     return card_names
 
-def evaluate_potential_addition(strategy, card_description):
+async def evaluate_potential_addition(strategy, card_description):
     """
     Evaluates a potential card addition by considering the deck's strategy and the card's description.
     
@@ -155,7 +164,7 @@ def evaluate_potential_addition(strategy, card_description):
     {"score": 42}
     """
     logger.debug(f"Evaluating potential addition: {card_description.splitlines()[0]}")
-    response = openai.chat.completions.create(
+    response = await openai.chat.completions.create(
         model="deepseek-chat",
         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Strategy:\n{strategy}\n\nCard description:\n{card_description}"}],
         temperature=0.1,
@@ -163,7 +172,7 @@ def evaluate_potential_addition(strategy, card_description):
     )
     return json.loads(response.choices[0].message.content)["score"]
 
-def get_potential_additions(current_deck_prompt, current_deck_cards):
+async def get_potential_additions(current_deck_prompt, current_deck_cards):
     """
     Gets potential additions to a decklist by asking GPT to generate Scryfall search queries for cards that would be good additions, executing those queries against the Scryfall API, and enriching the results with card descriptions.
 
@@ -188,7 +197,7 @@ def get_potential_additions(current_deck_prompt, current_deck_cards):
     """
     logger.info("Generating potential additions to decklist")
     
-    response = openai.chat.completions.create(
+    response = await openai.chat.completions.create(
         model="deepseek-chat" if USE_ONLY_CHEAP_MODEL else "deepseek-reasoner",
         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": current_deck_prompt}],
         temperature=0.1,
@@ -198,30 +207,31 @@ def get_potential_additions(current_deck_prompt, current_deck_cards):
     strategy = response_json["strategy"]
     queries = response_json["queries"]
     cards = {}
-    for query in queries:
-        try:
-            # Search Scryfall with the query
-            logger.debug(f"Running Scryfall query: {query}")
-            search_results = requests.get(f"https://api.scryfall.com/cards/search?q={query}")
-            if search_results.status_code == 404:
-                logger.debug(f"No cards found matching: {query}")
+    
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as session:
+        tasks = []
+        for query in queries:
+            tasks.append(asyncio.create_task(fetch_scryfall_search(session, query)))
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for query, result in zip(queries, results):
+            if isinstance(result, Exception):
+                logger.error(f"Error running query '{query}': {str(result)}")
                 continue
-            search_results.raise_for_status()
-            data = search_results.json()
-            logger.debug(f"Found {data['total_cards']} matching cards")
-            cards.update({card["name"]: card for card in data["data"]})
-        except Exception as e:
-            logger.error(f"Error running query '{query}': {str(e)}")
+            if result:
+                cards.update({card["name"]: card for card in result})
+    
     for name in current_deck_cards:
         if name in cards:
             del cards[name]
-    descriptions_dict = get_card_descriptions_dict(list(cards.keys()))
+            
+    card_names = list(cards.keys())
+    descriptions_dict = await get_card_descriptions_dict(card_names)
+    
     # Sort cards by relevance using evaluate_potential_addition
-    sorted_cards = []
-    for card_name, description in descriptions_dict.items():
-        relevance = evaluate_potential_addition(strategy, description)
-        sorted_cards.append((card_name, relevance))
-    sorted_cards.sort(key=lambda x: x[1], reverse=True)
+    eval_tasks = [evaluate_potential_addition(strategy, descriptions_dict[card_name]) for card_name in card_names]
+    relevance_scores = await asyncio.gather(*eval_tasks)
+    sorted_cards = sorted(zip(card_names, relevance_scores), key=lambda x: x[1], reverse=True)
     
     # Build final descriptions string with sorted cards
     descriptions = []
@@ -232,7 +242,19 @@ def get_potential_additions(current_deck_prompt, current_deck_cards):
             descriptions.append(descriptions_dict[card_name])
     return descriptions
 
-def get_deck_advice(decklist_text, format=None, additional_info=None):
+async def fetch_scryfall_search(session, query):
+    """Helper function to search Scryfall with a query"""
+    logger.debug(f"Running Scryfall query: {query}")
+    async with session.get(f"https://api.scryfall.com/cards/search?q={query}") as response:
+        if response.status == 404:
+            logger.debug(f"No cards found matching: {query}")
+            return None
+        response.raise_for_status()
+        data = await response.json()
+        logger.debug(f"Found {data['total_cards']} matching cards")
+        return data["data"]
+
+async def get_deck_advice(decklist_text, format=None, additional_info=None):
     """
     Gets AI advice on how to improve a decklist by first enriching it with card descriptions
     and then asking for recommendations.
@@ -245,13 +267,13 @@ def get_deck_advice(decklist_text, format=None, additional_info=None):
         
     Raises:
         openai.OpenAIError: If any OpenAI API requests fail
-        requests.exceptions.RequestException: If any Scryfall API requests fail
+        aiohttp.ClientError: If any Scryfall API requests fail
         ValueError: If no cards are found
     """
     logger.info("Getting deck improvement advice")
     # First get descriptions for all cards
-    decklist_cards = extract_card_names(decklist_text)
-    card_descriptions = get_card_descriptions_dict(decklist_cards)
+    decklist_cards = await extract_card_names(decklist_text)
+    card_descriptions = await get_card_descriptions_dict(decklist_cards)
     card_separator = "\n-----\n"
         
     system_prompt = f"""You are an expert Magic: The Gathering deck builder and advisor.
@@ -278,7 +300,7 @@ def get_deck_advice(decklist_text, format=None, additional_info=None):
     if additional_info:
         user_prompt += f"\n\nHere is additional information about the deck:\n{additional_info}"
     
-    potential_additions = get_potential_additions(user_prompt, decklist_cards)
+    potential_additions = await get_potential_additions(user_prompt, decklist_cards)
     if potential_additions:
         user_prompt += f"\n\nHere are some cards that might be good additions to the deck:\n{card_separator.join(potential_additions)}"
     
