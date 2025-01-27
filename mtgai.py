@@ -29,6 +29,7 @@ def env_var(name):
 logger.info("Loading environment variables")
 DEEPSEEK_API_KEY = env_var("DEEPSEEK_API_KEY")
 MONGO_URI = env_var("MONGO_URI")
+USE_ONLY_CHEAP_MODEL = env_var("USE_ONLY_CHEAP_MODEL") == "true"
 
 openai = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com/")
 
@@ -188,7 +189,7 @@ def get_potential_additions(current_deck_prompt, current_deck_cards):
     logger.info("Generating potential additions to decklist")
     
     response = openai.chat.completions.create(
-        model="deepseek-reasoner",
+        model="deepseek-chat" if USE_ONLY_CHEAP_MODEL else "deepseek-reasoner",
         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": current_deck_prompt}],
         temperature=0.1,
         response_format={'type': 'json_object'}
@@ -283,7 +284,7 @@ def get_deck_advice(decklist_text, format=None, additional_info=None):
     
     logger.debug("Making OpenAI API call for deck advice")
     response = openai.chat.completions.create(
-        model="deepseek-reasoner",
+        model="deepseek-chat" if USE_ONLY_CHEAP_MODEL else "deepseek-reasoner",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
