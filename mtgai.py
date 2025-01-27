@@ -147,6 +147,7 @@ def evaluate_potential_addition(strategy, card_description):
     You will be given a deck's strategy and a card's description.
     Read the deck's strategy and the card's description carefully.
     Your task is to rate the card's potential usefulness to the deck, on a scale of 1 (worst) to 100 (best).
+    Consider both the card's overall strength and how well it synergizes with the deck's strategy.
     Output your score as a JSON object with a single field, "score".
     Example output:
     {"score": 42}
