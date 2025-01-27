@@ -8,9 +8,11 @@ import pymongo
 import certifi
 import logging
 
+load_dotenv()
+
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=os.getenv("LOG_LEVEL", "INFO"),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -24,7 +26,6 @@ def env_var(name):
     logger.debug(f"Loaded environment variable: {name}")
     return value
 
-load_dotenv()
 logger.info("Loading environment variables")
 DEEPSEEK_API_KEY = env_var("DEEPSEEK_API_KEY")
 MONGO_URI = env_var("MONGO_URI")
