@@ -11,11 +11,11 @@ import logging
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter('%(asctime)s - %(filename)s:%(lineno)d - %(levelname)s - %(message)s'))
+logger.addHandler(handler)
 
 # Load environment variables
 def env_var(name):
