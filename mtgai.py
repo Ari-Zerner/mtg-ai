@@ -18,18 +18,22 @@ handler.setFormatter(logging.Formatter('%(asctime)s - %(filename)s:%(lineno)d - 
 logger.addHandler(handler)
 
 # Load environment variables
-def env_var(name):
+def env_var(name, default=None):
     value = os.getenv(name)
     if not value:
-        logger.error(f"Environment variable {name} not found")
-        raise ValueError(f"{name} is not set in the environment variables")
+        if default:
+            logger.debug(f"Environment variable {name} not found, using default value: {default}")
+            return default
+        else:
+            logger.error(f"Environment variable {name} not found")
+            raise ValueError(f"{name} is not set in the environment variables")
     logger.debug(f"Loaded environment variable: {name}")
     return value
 
 logger.info("Loading environment variables")
 DEEPSEEK_API_KEY = env_var("DEEPSEEK_API_KEY")
 MONGO_URI = env_var("MONGO_URI")
-USE_ONLY_CHEAP_MODEL = env_var("USE_ONLY_CHEAP_MODEL") == "true"
+USE_ONLY_CHEAP_MODEL = env_var("USE_ONLY_CHEAP_MODEL", "false") == "true"
 
 openai = AsyncOpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com/")
 
