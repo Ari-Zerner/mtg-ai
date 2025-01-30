@@ -7,6 +7,7 @@ import os
 import pymongo
 import certifi
 import logging
+import re
 
 load_dotenv()
 
@@ -40,7 +41,7 @@ openai = AsyncOpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.co
 async def fetch_card_description(session, name):
     """Helper function to fetch a single card description from Scryfall"""
     logger.debug(f"Searching Scryfall for card: {name}")
-    url = f"https://api.scryfall.com/cards/named?fuzzy={name}&format=text"
+    url = f"https://api.scryfall.com/cards/named?fuzzy={aiohttp.helpers.quote(name)}&format=text"
     async with session.get(url) as response:
         response.raise_for_status()
         return await response.text()
@@ -130,7 +131,7 @@ async def extract_card_names(decklist_text):
     system_prompt = """You are an automatic system that extracts card names from Magic: The Gathering decklists.
     You understand common Magic deck formats.
     Given a decklist that may contain extraneous information, extract just the name of each card.
-    Return the result as a JSON object with a single field, "card_names", which is an array of strings, where each string is a card name.
+    Return the result as a list of card names, one per line.
     """
     
     logger.debug("Making OpenAI API call to parse decklist")
@@ -140,10 +141,9 @@ async def extract_card_names(decklist_text):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": decklist_text}
         ],
-        temperature=0.1,
-        response_format={'type': 'json_object'}
+        temperature=0.1
     )
-    card_names = json.loads(response.choices[0].message.content)["card_names"]
+    card_names = [name.strip() for name in response.choices[0].message.content.splitlines() if name.strip()]
     logger.debug(f"Extracted {len(card_names)} card names from decklist")
     return card_names
 
@@ -163,18 +163,21 @@ async def evaluate_potential_addition(strategy, card_description):
     Read the deck's strategy and the card's description carefully.
     Your task is to rate the card's potential usefulness to the deck, on a scale of 1 (worst) to 100 (best).
     Consider both the card's overall strength and how well it synergizes with the deck's strategy.
-    Output your score as a JSON object with a single field, "score".
+    Output your score as an integer with no other text.
     Example output:
-    {"score": 42}
+    42
     """
-    logger.debug(f"Evaluating potential addition: {card_description.splitlines()[0]}")
-    response = await openai.chat.completions.create(
-        model="deepseek-chat",
-        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Strategy:\n{strategy}\n\nCard description:\n{card_description}"}],
-        temperature=0.1,
-        response_format={'type': 'json_object'}
-    )
-    return json.loads(response.choices[0].message.content)["score"]
+    try:
+        logger.debug(f"Evaluating potential addition: {card_description.splitlines()[0]}")
+        response = await openai.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Strategy:\n{strategy}\n\nCard description:\n{card_description}"}],
+            temperature=0.1
+        )
+        return int(response.choices[0].message.content)
+    except Exception as e:
+        logger.error(f"Error evaluating potential addition {card_description.splitlines()[0]}: {e}")
+        return 0
 
 async def get_potential_additions(current_deck_prompt, current_deck_cards):
     """
@@ -195,21 +198,38 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
     Your task is NOT to make final decisions about which cards to add, so generate queries to find a range of options that would fill different niches in the deck's strategy.
     Ensure that each query is restricted to legal cards, considering both legality in the format (using the query parameter `f:[format]`) and other restrictions such as color identity (`id<=[color identity]`).
     Be sure to consider any additional information provided, and how it should affect both your description of the deck's strategy and the search queries.
-    Your output should be a JSON object with two fields:
-    - strategy: A summary of the deck's strategy and what kinds of cards might make for good additions
-    - queries: A list of strings where each string is a Scryfall search query
+    Your output should contain two sections, separated by a double newline:
+    - A summary of the deck's strategy and what kinds of cards might make for good additions
+    - A list of Scryfall search queries, one per line
+    
+    Example output format:
+    The deck is a green-based stompy deck with a focus on ramping into large creatures, particularly Dinosaurs, and leveraging +1/+1 counters for additional value. The commander, Ghalta, Primal Hunger, benefits from having high-power creatures on the battlefield to reduce its casting cost. The deck includes a mix of ramp spells, large creatures with trample, and cards that synergize with +1/+1 counters. Good additions would be more ramp spells to ensure casting Ghalta and other large creatures early, additional large creatures with trample or other forms of evasion, and cards that provide card draw or protection to maintain board presence and deal with opposing threats.
+    
+    Scryfall search queries:
+    f:brawl id<=g t:Dinosaur
+    f:brawl id<=g pow>=4 tou>=4
+    f:brawl id<=g o:"+1/+1 counter"
+    f:brawl id<=g o:"add "
+    f:brawl id<=g o:"search" o:"library" o:"land"
     """
     logger.info("Generating potential additions to decklist")
     
     response = await openai.chat.completions.create(
         model="deepseek-chat" if USE_ONLY_CHEAP_MODEL else "deepseek-reasoner",
-        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": current_deck_prompt}],
-        temperature=0.1,
-        response_format={'type': 'json_object'}
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": current_deck_prompt}
+        ]
     )
-    response_json = json.loads(response.choices[0].message.content)
-    strategy = response_json["strategy"]
-    queries = response_json["queries"]
+    response_text = response.choices[0].message.content
+    logger.debug(f"Received response: {response_text}")
+    try:
+        strategy, queries = re.match(r"(.+)\n\n(.+)", response_text, re.DOTALL).groups()
+        queries = [query.strip() for query in queries.splitlines() if query.strip()]
+    except:
+        logger.error(f"Improperly formatted strategy and queries:\n{response_text}")
+        return []
+    
     cards = {}
     
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as session:
@@ -233,7 +253,7 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
     descriptions_dict = await get_card_descriptions_dict(card_names)
     
     # Sort cards by relevance using evaluate_potential_addition
-    eval_tasks = [evaluate_potential_addition(strategy, descriptions_dict[card_name]) for card_name in card_names]
+    eval_tasks = [asyncio.create_task(evaluate_potential_addition(strategy, descriptions_dict[card_name])) for card_name in card_names]
     relevance_scores = await asyncio.gather(*eval_tasks)
     sorted_cards = sorted(zip(card_names, relevance_scores), key=lambda x: x[1], reverse=True)
     
@@ -309,7 +329,7 @@ async def get_deck_advice(decklist_text, format=None, additional_info=None):
         user_prompt += f"\n\nHere are some cards that might be good additions to the deck:\n{card_separator.join(potential_additions)}"
     
     logger.debug("Making OpenAI API call for deck advice")
-    response = openai.chat.completions.create(
+    response = await openai.chat.completions.create(
         model="deepseek-chat" if USE_ONLY_CHEAP_MODEL else "deepseek-reasoner",
         messages=[
             {"role": "system", "content": system_prompt},
