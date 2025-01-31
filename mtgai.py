@@ -32,11 +32,11 @@ def env_var(name, default=None):
     return value
 
 logger.info("Loading environment variables")
-DEEPSEEK_API_KEY = env_var("DEEPSEEK_API_KEY")
+CHEAP_MODEL = env_var("CHEAP_MODEL")
+GOOD_MODEL = env_var("GOOD_MODEL")
 MONGO_URI = env_var("MONGO_URI")
-USE_ONLY_CHEAP_MODEL = env_var("USE_ONLY_CHEAP_MODEL", "false") == "true"
 
-openai = AsyncOpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com/")
+openai = AsyncOpenAI(api_key=env_var("API_KEY"), base_url=env_var("API_BASE_URL"))
 
 async def fetch_card_description(session, name):
     """Helper function to fetch a single card description from Scryfall"""
@@ -136,7 +136,7 @@ async def extract_card_names(decklist_text):
     
     logger.debug("Making OpenAI API call to parse decklist")
     response = await openai.chat.completions.create(
-        model="deepseek-chat",
+        model=CHEAP_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": decklist_text}
@@ -170,7 +170,7 @@ async def evaluate_potential_addition(strategy, card_description):
     try:
         logger.debug(f"Evaluating potential addition: {card_description.splitlines()[0]}")
         response = await openai.chat.completions.create(
-            model="deepseek-chat",
+            model=CHEAP_MODEL,
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Strategy:\n{strategy}\n\nCard description:\n{card_description}"}],
             temperature=0.1
         )
@@ -215,7 +215,7 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
     logger.info("Generating potential additions to decklist")
     
     response = await openai.chat.completions.create(
-        model="deepseek-chat" if USE_ONLY_CHEAP_MODEL else "deepseek-reasoner",
+        model=GOOD_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": current_deck_prompt}
@@ -330,7 +330,7 @@ async def get_deck_advice(decklist_text, format=None, additional_info=None):
     
     logger.debug("Making OpenAI API call for deck advice")
     response = await openai.chat.completions.create(
-        model="deepseek-chat" if USE_ONLY_CHEAP_MODEL else "deepseek-reasoner",
+        model=GOOD_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
