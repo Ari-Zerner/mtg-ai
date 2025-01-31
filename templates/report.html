@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Deckbuilder Report</title>
+    <style>
+      .content {
+        margin: 20px;
+        padding: 20px;
+        border: 1px solid #ccc;
+      }
+      .download-btn {
+        margin: 20px;
+        padding: 10px 20px;
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .download-btn:hover {
+        background-color: #45a049;
+      }
+    </style>
+  </head>
+  <body>
+    <button class="download-btn" onclick="downloadMarkdown()">Download Report</button>
+    
+    <div class="content">
+      {{ content_html|safe }}
+    </div>
+
+    <script>
+      function downloadMarkdown() {
+        const content = {{ content_md|tojson }};
+        const blob = new Blob([content], { type: 'text/markdown' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'deckbuilder_report.md';
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }
+    </script>
+  </body>
+</html>

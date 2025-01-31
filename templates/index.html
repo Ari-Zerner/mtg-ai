@@ -34,7 +34,7 @@
       </div>
       <div>
         <label for="format">Format (e.g. EDH):</label><br />
-        <input type="text" name="format" />
+        <input type="text" name="format" value="{{ request.form.format if request.form.format else '' }}" />
       </div>
       <div>
         <label for="additional_info">Additional Info (optional):</label><br />
@@ -45,9 +45,5 @@
       <div class="loading">Analyzing deck... Please wait...</div>
       <button type="submit">Get Advice</button>
     </form>
-
-    {% if advice %}
-    <div class="output">{{ advice|safe }}</div>
-    {% endif %}
   </body>
 </html>
