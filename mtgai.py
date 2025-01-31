@@ -138,7 +138,7 @@ async def extract_card_names(decklist_text):
     response = await openai.chat.completions.create(
         model=CHEAP_MODEL,
         messages=[
-            {"role": "system", "content": system_prompt},
+            {"role": "developer", "content": system_prompt},
             {"role": "user", "content": decklist_text}
         ],
         temperature=0.1
@@ -164,14 +164,15 @@ async def evaluate_potential_addition(strategy, card_description):
     Your task is to rate the card's potential usefulness to the deck, on a scale of 1 (worst) to 100 (best).
     Consider both the card's overall strength and how well it synergizes with the deck's strategy.
     Output your score as an integer with no other text.
-    Example output:
-    42
     """
     try:
         logger.debug(f"Evaluating potential addition: {card_description.splitlines()[0]}")
         response = await openai.chat.completions.create(
             model=CHEAP_MODEL,
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Strategy:\n{strategy}\n\nCard description:\n{card_description}"}],
+            messages=[
+                {"role": "developer", "content": system_prompt},
+                {"role": "user", "content": f"<strategy>\n{strategy}\n</strategy>\n<card description>\n{card_description}\n</card description>"}
+            ],
             temperature=0.1
         )
         return int(response.choices[0].message.content)
@@ -202,7 +203,7 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
     - A summary of the deck's strategy and what kinds of cards might make for good additions
     - A list of Scryfall search queries, one per line. Start each line with QUERY:
     
-    Example output format:
+    <example-output>
     The deck is a green-based stompy deck with a focus on ramping into large creatures, particularly Dinosaurs, and leveraging +1/+1 counters for additional value. The commander, Ghalta, Primal Hunger, benefits from having high-power creatures on the battlefield to reduce its casting cost. The deck includes a mix of ramp spells, large creatures with trample, and cards that synergize with +1/+1 counters. Good additions would be more ramp spells to ensure casting Ghalta and other large creatures early, additional large creatures with trample or other forms of evasion, and cards that provide card draw or protection to maintain board presence and deal with opposing threats.
     
     QUERY: f:brawl id<=g t:Dinosaur
@@ -210,13 +211,14 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
     QUERY: f:brawl id<=g o:"+1/+1 counter"
     QUERY: f:brawl id<=g o:"add "
     QUERY: f:brawl id<=g o:"search" o:"library" o:"land"
+    </example-output>
     """
     logger.info("Generating potential additions to decklist")
     
     response = await openai.chat.completions.create(
         model=GOOD_MODEL,
         messages=[
-            {"role": "system", "content": system_prompt},
+            {"role": "developer", "content": system_prompt},
             {"role": "user", "content": current_deck_prompt}
         ]
     )
@@ -301,7 +303,6 @@ async def get_deck_advice(decklist_text, format=None, additional_info=None):
     # First get descriptions for all cards
     decklist_cards = await extract_card_names(decklist_text)
     card_descriptions = await get_card_descriptions_dict(decklist_cards)
-    card_separator = "\n-----\n"
         
     system_prompt = f"""You are an expert Magic: The Gathering deck builder and advisor.
     You will be given a decklist, along with descriptions of the cards in the deck.
@@ -313,30 +314,35 @@ async def get_deck_advice(decklist_text, format=None, additional_info=None):
     Make sure your output is properly formatted markdown.
     """
     
-    user_prompt = f"""Here are the descriptions of the cards in the deck:
-    {card_separator.join([card_descriptions[name] for name in decklist_cards])}
+    decklist_descriptions_text = '\n'.join([f"<card>\n{card_descriptions[name]}\n</card>" for name in decklist_cards])
+    user_prompt = f"""<decklist-card-descriptions>
+    {decklist_descriptions_text}
+    </decklist-card-descriptions>
     
-    
-    Here is the decklist:
-    {decklist_text}"""
+    <decklist>
+    {decklist_text}
+    </decklist>
+    """
     
     if format:
-        user_prompt += f"\n\nThe decklist is for the {format} format. Consider the rules of {format} when evaluating the deck, and only suggest adding cards that are legal in {format}. Assume that the current decklist is already legal in {format}."
+        format_info = f"The decklist is for the {format} format. Consider the rules of {format} when evaluating the deck, and only suggest adding cards that are legal in {format}. Assume that the current decklist is already legal in {format}."
         if format.lower() == "brawl":
-            user_prompt += "\nRemember the rules of Brawl (formerly known as Historic Brawl): 2 players, 100-card singleton decks with commanders, restricted to commander's color identity, 25 starting life, using cards from Magic: The Gathering Arena."
+            format_info += "\nRemember the rules of Brawl (formerly known as Historic Brawl): 2 players, 100-card singleton decks with commanders, restricted to commander's color identity, 25 starting life, using cards from Magic: The Gathering Arena."
+        user_prompt += f"\n\n<format-info>\n{format_info}\n</format-info>"
     
     if additional_info:
-        user_prompt += f"\n\nHere is additional information about the deck:\n{additional_info}"
+        user_prompt += f"\n\n<additional-info>\n{additional_info}\n</additional-info>"
     
     potential_additions = await get_potential_additions(user_prompt, decklist_cards)
     if potential_additions:
-        user_prompt += f"\n\nHere are some cards that might be good additions to the deck:\n{card_separator.join(potential_additions)}"
+        addition_descriptions_text = '\n'.join([f"<card>\n{card}\n</card>" for card in potential_additions])
+        user_prompt += f"\n\n<potential-additions>\n{addition_descriptions_text}\n</potential-additions>"
     
     logger.debug("Making OpenAI API call for deck advice")
     response = await openai.chat.completions.create(
         model=GOOD_MODEL,
         messages=[
-            {"role": "system", "content": system_prompt},
+            {"role": "developer", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
     )
