@@ -310,6 +310,7 @@ async def get_deck_advice(decklist_text, format=None, additional_info=None):
     Consider aspects like mana curve, overall gameplan, synergies between cards, and potential weaknesses.
     Unless instrtucted otherwise, aim to balance suggestions for cutting and adding cards so that the size of the deck doesn't change.
     Provide reasoning for your suggestions so that players can learn from your advice.
+    Make sure your output is properly formatted markdown.
     """
     
     user_prompt = f"""Here are the descriptions of the cards in the deck:
