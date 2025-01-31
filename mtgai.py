@@ -200,17 +200,16 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
     Be sure to consider any additional information provided, and how it should affect both your description of the deck's strategy and the search queries.
     Your output should contain two sections, separated by a double newline:
     - A summary of the deck's strategy and what kinds of cards might make for good additions
-    - A list of Scryfall search queries, one per line
+    - A list of Scryfall search queries, one per line. Start each line with QUERY:
     
     Example output format:
     The deck is a green-based stompy deck with a focus on ramping into large creatures, particularly Dinosaurs, and leveraging +1/+1 counters for additional value. The commander, Ghalta, Primal Hunger, benefits from having high-power creatures on the battlefield to reduce its casting cost. The deck includes a mix of ramp spells, large creatures with trample, and cards that synergize with +1/+1 counters. Good additions would be more ramp spells to ensure casting Ghalta and other large creatures early, additional large creatures with trample or other forms of evasion, and cards that provide card draw or protection to maintain board presence and deal with opposing threats.
     
-    Scryfall search queries:
-    f:brawl id<=g t:Dinosaur
-    f:brawl id<=g pow>=4 tou>=4
-    f:brawl id<=g o:"+1/+1 counter"
-    f:brawl id<=g o:"add "
-    f:brawl id<=g o:"search" o:"library" o:"land"
+    QUERY: f:brawl id<=g t:Dinosaur
+    QUERY: f:brawl id<=g pow>=4 tou>=4
+    QUERY: f:brawl id<=g o:"+1/+1 counter"
+    QUERY: f:brawl id<=g o:"add "
+    QUERY: f:brawl id<=g o:"search" o:"library" o:"land"
     """
     logger.info("Generating potential additions to decklist")
     
@@ -224,8 +223,12 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
     response_text = response.choices[0].message.content
     logger.debug(f"Received response: {response_text}")
     try:
-        strategy, queries = re.match(r"(.+)\n\n(.+)", response_text, re.DOTALL).groups()
-        queries = [query.strip() for query in queries.splitlines() if query.strip()]
+        strategy, queries_block = re.match(r"(.+)\n\n(.+)", response_text, re.DOTALL).groups()
+        queries = []
+        for query_line in queries_block.splitlines():
+            query_match = re.match(r"^QUERY:\s*(.*)$", query_line.strip())
+            if query_match:
+                queries.append(query_match.group(1))
     except:
         logger.error(f"Improperly formatted strategy and queries:\n{response_text}")
         return []
@@ -234,13 +237,13 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
     
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as session:
         tasks = []
-        for query in queries:
-            tasks.append(asyncio.create_task(fetch_scryfall_search(session, query)))
+        for query_line in queries:
+            tasks.append(asyncio.create_task(fetch_scryfall_search(session, query_line)))
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        for query, result in zip(queries, results):
+        for query_line, result in zip(queries, results):
             if isinstance(result, Exception):
-                logger.error(f"Error running query '{query}': {str(result)}")
+                logger.error(f"Error running query '{query_line}': {str(result)}")
                 continue
             if result:
                 cards.update({card["name"]: card for card in result})
