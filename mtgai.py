@@ -1,7 +1,6 @@
-import json
 import aiohttp
 import asyncio
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 from dotenv import load_dotenv
 import os
 import pymongo
@@ -38,7 +37,31 @@ GOOD_MODEL = env_var("GOOD_MODEL")
 MONGO_URI = env_var("MONGO_URI")
 MAX_CARDS_PER_QUERY = int(env_var("MAX_CARDS_PER_QUERY"))
 
-openai = AsyncOpenAI(api_key=env_var("API_KEY"), base_url=env_var("API_BASE_URL"))
+openai_client = AsyncOpenAI(api_key=env_var("API_KEY"), base_url=env_var("API_BASE_URL"))
+
+async def call_ai(model, dev_prompt, user_prompt):
+    try:
+        response = await openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "developer", "content": dev_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+    except BadRequestError as e:
+        if e.code == "unsupported_value" and e.param == "messages[0].role":
+            # Fall back to "user" role instead of "developer" for models with unusual API (e.g. o1-mini)
+            response = await openai_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "user", "content": dev_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+            )
+        else:
+            raise
+    return response.choices[0].message.content
+
 
 async def fetch_card_description(session, name):
     """Helper function to fetch a single card description from Scryfall"""
@@ -137,15 +160,8 @@ async def extract_card_names(decklist_text):
     """
     
     logger.debug("Making OpenAI API call to parse decklist")
-    response = await openai.chat.completions.create(
-        model=CHEAP_MODEL,
-        messages=[
-            {"role": "developer", "content": dev_prompt},
-            {"role": "user", "content": decklist_text}
-        ],
-        temperature=0.1
-    )
-    card_names = [name.strip() for name in response.choices[0].message.content.splitlines() if name.strip()]
+    response = await call_ai(CHEAP_MODEL, dev_prompt, decklist_text)
+    card_names = [name.strip() for name in response.splitlines() if name.strip()]
     logger.debug(f"Extracted {len(card_names)} card names from decklist")
     return card_names
 
@@ -169,15 +185,9 @@ async def evaluate_potential_addition(strategy, card_description):
     """
     try:
         logger.debug(f"Evaluating potential addition: {card_description.splitlines()[0]}")
-        response = await openai.chat.completions.create(
-            model=CHEAP_MODEL,
-            messages=[
-                {"role": "developer", "content": dev_prompt},
-                {"role": "user", "content": f"<strategy>\n{strategy}\n</strategy>\n<card description>\n{card_description}\n</card description>"}
-            ],
-            temperature=0.1
-        )
-        return int(response.choices[0].message.content)
+        user_prompt = f"<strategy>\n{strategy}\n</strategy>\n<card description>\n{card_description}\n</card description>"   
+        response = await call_ai(CHEAP_MODEL, dev_prompt, user_prompt)
+        return int(response)
     except Exception as e:
         logger.error(f"Error evaluating potential addition {card_description.splitlines()[0]}: {e}")
         return 0
@@ -273,17 +283,10 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
     """
     logger.info("Generating potential additions to decklist")
     
-    response = await openai.chat.completions.create(
-        model=GOOD_MODEL,
-        messages=[
-            {"role": "developer", "content": dev_prompt},
-            {"role": "user", "content": current_deck_prompt}
-        ]
-    )
-    response_text = response.choices[0].message.content
-    logger.debug(f"Received response: {response_text}")
+    response = await call_ai(GOOD_MODEL, dev_prompt, current_deck_prompt)
+    logger.debug(f"Received response: {response}")
     try:
-        strategy, queries_block = re.match(r"<strategy>(.+)</strategy>\s*<queries>(.+)</queries>", response_text, re.DOTALL).groups()
+        strategy, queries_block = re.match(r"<strategy>(.+)</strategy>\s*<queries>(.+)</queries>", response, re.DOTALL).groups()
         queries = []
         for query_line in queries_block.splitlines():
             try:
@@ -294,7 +297,7 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
                 logger.error(f"Error parsing query line: {query_line}")
                 continue
     except:
-        logger.error(f"Improperly formatted strategy and queries:\n{response_text}")
+        logger.error(f"Improperly formatted strategy and queries:\n{response}")
         return []
     
     cards = {}
@@ -405,12 +408,6 @@ async def get_deck_advice(decklist_text, format=None, additional_info=None):
         user_prompt += f"\n\n<potential-additions>\n{addition_descriptions_text}\n</potential-additions>"
     
     logger.debug("Making OpenAI API call for deck advice")
-    response = await openai.chat.completions.create(
-        model=GOOD_MODEL,
-        messages=[
-            {"role": "developer", "content": dev_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-    )
+    response = await call_ai(GOOD_MODEL, dev_prompt, user_prompt)
     logger.debug("Successfully received deck advice from OpenAI")
-    return response.choices[0].message.content
+    return response
