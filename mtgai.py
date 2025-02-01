@@ -253,9 +253,15 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
     Your task is NOT to make final decisions about which cards to add, so generate queries to find a range of options that would fill different niches in the deck's strategy.
     Ensure that each query is restricted to legal cards, considering restrictions such as color identity (`id<=[color identity]`).
     Be sure to consider any additional information provided, and how it should affect both your description of the deck's strategy and the search queries.
-    Your output should contain two sections, separated by a double newline:
-    - A summary of the deck's strategy and what kinds of cards might make for good additions
-    - A list of Scryfall search queries, one per line. Start each line with "QUERY:"
+    Your output should be delineated with XML tags as follows:
+    <strategy>
+    [summary of the deck's strategy and what kinds of cards might make for good additions]
+    </strategy>
+    <queries>
+    <query>[first Scryfall search query]</query>
+    <query>[second Scryfall search query]</query>
+    ...
+    </queries>
     
     You can use the following syntax reference to help you generate queries:
     <scryfall-syntax-reference>
@@ -274,10 +280,10 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
     response_text = response.choices[0].message.content
     logger.debug(f"Received response: {response_text}")
     try:
-        strategy, queries_block = re.match(r"(.+)\n\n(.+)", response_text, re.DOTALL).groups()
+        strategy, queries_block = re.match(r"<strategy>(.+)</strategy>\n<queries>(.+)</queries>", response_text, re.DOTALL).groups()
         queries = []
         for query_line in queries_block.splitlines():
-            query_match = re.match(r"^QUERY:\s*(.*)$", query_line.strip())
+            query_match = re.match(r"<query>(.+)</query>", query_line.strip())
             if query_match:
                 queries.append(query_match.group(1) + (f" f:{format}" if format else ""))
     except:
