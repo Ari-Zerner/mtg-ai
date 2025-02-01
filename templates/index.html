@@ -33,8 +33,13 @@
         >
       </div>
       <div>
-        <label for="format">Format (e.g. EDH):</label><br />
-        <input type="text" name="format" value="{{ request.form.format if request.form.format else '' }}" />
+        <label for="format">Format</label><br />
+        <select name="format">
+          <option value=""></option>
+          {% for format in formats %}
+            <option value="{{ format }}" {% if request.form.format == format %}selected{% endif %}>{{ format }}</option>
+          {% endfor %}
+        </select>
       </div>
       <div>
         <label for="additional_info">Additional Info (optional):</label><br />

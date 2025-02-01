@@ -181,6 +181,26 @@ async def evaluate_potential_addition(strategy, card_description):
         logger.error(f"Error evaluating potential addition {card_description.splitlines()[0]}: {e}")
         return 0
 
+FORMAT_LIST = None
+async def get_format_list():
+    global FORMAT_LIST
+    if FORMAT_LIST:
+        return FORMAT_LIST
+    
+    logger.debug("Fetching format list from Scryfall")
+    try:
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as session:
+            async with session.get("https://api.scryfall.com/cards/named?exact=Island") as response:
+                if response.status != 200:
+                    logger.error(f"Failed to fetch format list: {response.status}")
+                    return []
+                data = await response.json()
+                FORMAT_LIST = sorted(data['legalities'].keys())
+                return FORMAT_LIST
+    except Exception as e:
+        logger.error(f"Error fetching format list: {e}")
+        return []
+
 SCRYFALL_SYNTAX_REFERENCE = None
 async def get_scryfall_syntax_reference():
     """
@@ -213,13 +233,13 @@ async def get_scryfall_syntax_reference():
         logger.error(f"Error downloading Scryfall syntax reference: {e}")
         return ""
 
-async def get_potential_additions(current_deck_prompt, current_deck_cards):
+async def get_potential_additions(current_deck_prompt, current_deck_cards, format=None):
     """
     Gets potential additions to a decklist by asking GPT to generate Scryfall search queries for cards that would be good additions, executing those queries against the Scryfall API, and enriching the results with card descriptions.
 
     Args:
         current_deck_prompt (str): Information about the current deck, including decklist and any additional context
-
+        format (str): The format of the deck, if known
     Returns:
         list: Descriptions of potential card additions. Empty list if no results or error occurs.
 
@@ -231,7 +251,7 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
     You will be given information about a deck.
     Your task is to summarize the deck's strategy what kinds of cards might make for good additions, then generate Scryfall search queries to find those cards.
     Your task is NOT to make final decisions about which cards to add, so generate queries to find a range of options that would fill different niches in the deck's strategy.
-    Ensure that each query is restricted to legal cards, considering both legality in the format (using the query parameter `f:[format]`) and other restrictions such as color identity (`id<=[color identity]`).
+    Ensure that each query is restricted to legal cards, considering restrictions such as color identity (`id<=[color identity]`).
     Be sure to consider any additional information provided, and how it should affect both your description of the deck's strategy and the search queries.
     Your output should contain two sections, separated by a double newline:
     - A summary of the deck's strategy and what kinds of cards might make for good additions
@@ -259,7 +279,7 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
         for query_line in queries_block.splitlines():
             query_match = re.match(r"^QUERY:\s*(.*)$", query_line.strip())
             if query_match:
-                queries.append(query_match.group(1))
+                queries.append(query_match.group(1) + (f" f:{format}" if format else ""))
     except:
         logger.error(f"Improperly formatted strategy and queries:\n{response_text}")
         return []
@@ -354,7 +374,7 @@ async def get_deck_advice(decklist_text, format=None, additional_info=None):
     """
     
     if format:
-        format_info = f"The decklist is for the {format} format. Consider the rules of {format} when evaluating the deck, and only suggest adding cards that are legal in {format}. Assume that the current decklist is already legal in {format}."
+        format_info = f"The decklist is for the {format} format. Consider the rules of {format} when evaluating the deck. Assume that the current decklist is already legal in {format}."
         if format.lower() == "brawl":
             format_info += "\nRemember the rules of Brawl (formerly known as Historic Brawl): 2 players, 100-card singleton decks with commanders, restricted to commander's color identity, 25 starting life, using cards from Magic: The Gathering Arena."
         user_prompt += f"\n\n<format-info>\n{format_info}\n</format-info>"

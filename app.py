@@ -6,7 +6,8 @@ app = Flask(__name__)
 
 @app.route('/', methods=['GET'])
 def index():
-    return render_template('index.html')
+    formats = asyncio.run(mtgai.get_format_list())
+    return render_template('index.html', formats=formats)
 
 @app.route('/', methods=['POST'])
 def report():
