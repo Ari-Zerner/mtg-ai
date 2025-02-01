@@ -6,3 +6,4 @@ openai
 pymongo
 certifi
 aiohttp
+beautifulsoup4

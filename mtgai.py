@@ -8,6 +8,7 @@ import pymongo
 import certifi
 import logging
 import re
+from bs4 import BeautifulSoup
 
 load_dotenv()
 
@@ -180,6 +181,38 @@ async def evaluate_potential_addition(strategy, card_description):
         logger.error(f"Error evaluating potential addition {card_description.splitlines()[0]}: {e}")
         return 0
 
+SCRYFALL_SYNTAX_REFERENCE = None
+async def get_scryfall_syntax_reference():
+    """
+    Downloads and extracts the Scryfall syntax reference from their documentation page.
+    
+    Returns:
+        str: Concatenated contents of all reference-block divs from the syntax page
+    """
+    global SCRYFALL_SYNTAX_REFERENCE
+    if SCRYFALL_SYNTAX_REFERENCE:
+        return SCRYFALL_SYNTAX_REFERENCE
+    
+    logger.debug("Downloading Scryfall syntax reference")
+    try:
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as session:
+            async with session.get("https://scryfall.com/docs/syntax") as response:
+                if response.status != 200:
+                    logger.error(f"Failed to download Scryfall syntax reference: {response.status}")
+                    return ""
+                html = await response.text()
+                
+        # Parse HTML and extract reference blocks
+        soup = BeautifulSoup(html, 'html.parser')
+        reference_blocks = soup.find_all('div', class_='reference-block')
+        logger.debug(f"Downloaded {len(reference_blocks)} reference blocks")
+        reference_text = "<div>\n" + "\n".join(block.get_text(strip=True) for block in reference_blocks) + "\n</div>"
+        SCRYFALL_SYNTAX_REFERENCE = reference_text
+        return reference_text
+    except Exception as e:
+        logger.error(f"Error downloading Scryfall syntax reference: {e}")
+        return ""
+
 async def get_potential_additions(current_deck_prompt, current_deck_cards):
     """
     Gets potential additions to a decklist by asking GPT to generate Scryfall search queries for cards that would be good additions, executing those queries against the Scryfall API, and enriching the results with card descriptions.
@@ -193,7 +226,8 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
     Raises:
         openai.OpenAIError: If the OpenAI API request fails
     """
-    system_prompt = """You are an expert Magic: The Gathering deck builder and advisor.
+    syntax_reference = await get_scryfall_syntax_reference()
+    system_prompt = f"""You are an expert Magic: The Gathering deck builder and advisor.
     You will be given information about a deck.
     Your task is to summarize the deck's strategy what kinds of cards might make for good additions, then generate Scryfall search queries to find those cards.
     Your task is NOT to make final decisions about which cards to add, so generate queries to find a range of options that would fill different niches in the deck's strategy.
@@ -201,17 +235,12 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards):
     Be sure to consider any additional information provided, and how it should affect both your description of the deck's strategy and the search queries.
     Your output should contain two sections, separated by a double newline:
     - A summary of the deck's strategy and what kinds of cards might make for good additions
-    - A list of Scryfall search queries, one per line. Start each line with QUERY:
+    - A list of Scryfall search queries, one per line. Start each line with "QUERY:"
     
-    <example-output>
-    The deck is a green-based stompy deck with a focus on ramping into large creatures, particularly Dinosaurs, and leveraging +1/+1 counters for additional value. The commander, Ghalta, Primal Hunger, benefits from having high-power creatures on the battlefield to reduce its casting cost. The deck includes a mix of ramp spells, large creatures with trample, and cards that synergize with +1/+1 counters. Good additions would be more ramp spells to ensure casting Ghalta and other large creatures early, additional large creatures with trample or other forms of evasion, and cards that provide card draw or protection to maintain board presence and deal with opposing threats.
-    
-    QUERY: f:brawl id<=g t:Dinosaur
-    QUERY: f:brawl id<=g pow>=4 tou>=4
-    QUERY: f:brawl id<=g o:"+1/+1 counter"
-    QUERY: f:brawl id<=g o:"add "
-    QUERY: f:brawl id<=g o:"search" o:"library" o:"land"
-    </example-output>
+    You can use the following syntax reference to help you generate queries:
+    <scryfall-syntax-reference>
+    {syntax_reference}
+    </scryfall-syntax-reference>
     """
     logger.info("Generating potential additions to decklist")
     
