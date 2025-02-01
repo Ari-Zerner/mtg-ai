@@ -36,6 +36,7 @@ logger.info("Loading environment variables")
 CHEAP_MODEL = env_var("CHEAP_MODEL")
 GOOD_MODEL = env_var("GOOD_MODEL")
 MONGO_URI = env_var("MONGO_URI")
+MAX_CARDS_PER_QUERY = int(env_var("MAX_CARDS_PER_QUERY"))
 
 openai = AsyncOpenAI(api_key=env_var("API_KEY"), base_url=env_var("API_BASE_URL"))
 
@@ -253,6 +254,8 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
     Your task is NOT to make final decisions about which cards to add, so generate queries to find a range of options that would fill different niches in the deck's strategy.
     Ensure that each query is restricted to legal cards, considering restrictions such as color identity (`id<=[color identity]`).
     Be sure to consider any additional information provided, and how it should affect both your description of the deck's strategy and the search queries.
+    Keep your queries specific; any query that matches more than {MAX_CARDS_PER_QUERY} cards is too broad.
+    
     Your output should be delineated with XML tags as follows:
     <strategy>
     [summary of the deck's strategy and what kinds of cards might make for good additions]
@@ -283,9 +286,13 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
         strategy, queries_block = re.match(r"<strategy>(.+)</strategy>\n<queries>(.+)</queries>", response_text, re.DOTALL).groups()
         queries = []
         for query_line in queries_block.splitlines():
-            query_match = re.match(r"<query>(.+)</query>", query_line.strip())
-            if query_match:
-                queries.append(query_match.group(1) + (f" f:{format}" if format else ""))
+            try:
+                query_match = re.match(r"<query>(.+)</query>", query_line.strip())
+                if query_match:
+                    queries.append(query_match.group(1) + (f" f:{format}" if format else ""))
+            except Exception as e:
+                logger.error(f"Error parsing query line: {query_line}")
+                continue
     except:
         logger.error(f"Improperly formatted strategy and queries:\n{response_text}")
         return []
@@ -328,15 +335,19 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
 
 async def fetch_scryfall_search(session, query):
     """Helper function to search Scryfall with a query"""
-    logger.debug(f"Running Scryfall query: {query}")
-    async with session.get(f"https://api.scryfall.com/cards/search?q={query}") as response:
-        if response.status == 404:
-            logger.debug(f"No cards found matching: {query}")
-            return None
-        response.raise_for_status()
-        data = await response.json()
-        logger.debug(f"Found {data['total_cards']} matching cards")
-        return data["data"]
+    all_cards = []
+    url = f"https://api.scryfall.com/cards/search?q={query}"
+    while url and len(all_cards) < MAX_CARDS_PER_QUERY:
+        async with session.get(url) as response:
+            if response.status == 404:
+                logger.debug(f"No cards found matching query: {query}")
+                return None
+            response.raise_for_status()
+            data = await response.json()
+            all_cards.extend(data["data"])
+            url = data.get("next_page")
+    logger.debug(f"Found {len(all_cards)} cards matching query: {query}")
+    return all_cards[:MAX_CARDS_PER_QUERY]
 
 async def get_deck_advice(decklist_text, format=None, additional_info=None):
     """
