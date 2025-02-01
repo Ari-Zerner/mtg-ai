@@ -130,7 +130,7 @@ async def extract_card_names(decklist_text):
         openai.OpenAIError: If the OpenAI API request fails
     """
     logger.info("Extracting card names from decklist")
-    system_prompt = """You are an automatic system that extracts card names from Magic: The Gathering decklists.
+    dev_prompt = """You are an automatic system that extracts card names from Magic: The Gathering decklists.
     You understand common Magic deck formats.
     Given a decklist that may contain extraneous information, extract just the name of each card.
     Return the result as a list of card names, one per line.
@@ -140,7 +140,7 @@ async def extract_card_names(decklist_text):
     response = await openai.chat.completions.create(
         model=CHEAP_MODEL,
         messages=[
-            {"role": "developer", "content": system_prompt},
+            {"role": "developer", "content": dev_prompt},
             {"role": "user", "content": decklist_text}
         ],
         temperature=0.1
@@ -160,7 +160,7 @@ async def evaluate_potential_addition(strategy, card_description):
     Returns:
         int: A score from 1 to 100 indicating the card's potential usefulness to the deck
     """
-    system_prompt = """You are an expert Magic: The Gathering deck builder and advisor.
+    dev_prompt = """You are an expert Magic: The Gathering deck builder and advisor.
     You will be given a deck's strategy and a card's description.
     Read the deck's strategy and the card's description carefully.
     Your task is to rate the card's potential usefulness to the deck, on a scale of 1 (worst) to 100 (best).
@@ -172,7 +172,7 @@ async def evaluate_potential_addition(strategy, card_description):
         response = await openai.chat.completions.create(
             model=CHEAP_MODEL,
             messages=[
-                {"role": "developer", "content": system_prompt},
+                {"role": "developer", "content": dev_prompt},
                 {"role": "user", "content": f"<strategy>\n{strategy}\n</strategy>\n<card description>\n{card_description}\n</card description>"}
             ],
             temperature=0.1
@@ -248,13 +248,13 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
         openai.OpenAIError: If the OpenAI API request fails
     """
     syntax_reference = await get_scryfall_syntax_reference()
-    system_prompt = f"""You are an expert Magic: The Gathering deck builder and advisor.
+    dev_prompt = f"""You are an expert Magic: The Gathering deck builder and advisor.
     You will be given information about a deck.
     Your task is to summarize the deck's strategy what kinds of cards might make for good additions, then generate Scryfall search queries to find those cards.
     Your task is NOT to make final decisions about which cards to add, so generate queries to find a range of options that would fill different niches in the deck's strategy.
     Ensure that each query is restricted to legal cards, considering restrictions such as color identity (`id<=[color identity]`).
     Be sure to consider any additional information provided, and how it should affect both your description of the deck's strategy and the search queries.
-    Keep your queries specific; any query that matches more than {MAX_CARDS_PER_QUERY} cards is too broad.
+    Try to keep your queries specific; only the first {MAX_CARDS_PER_QUERY} cards returned by each query will be considered.
     
     Your output should be delineated with XML tags as follows:
     <strategy>
@@ -276,14 +276,14 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
     response = await openai.chat.completions.create(
         model=GOOD_MODEL,
         messages=[
-            {"role": "developer", "content": system_prompt},
+            {"role": "developer", "content": dev_prompt},
             {"role": "user", "content": current_deck_prompt}
         ]
     )
     response_text = response.choices[0].message.content
     logger.debug(f"Received response: {response_text}")
     try:
-        strategy, queries_block = re.match(r"<strategy>(.+)</strategy>\n<queries>(.+)</queries>", response_text, re.DOTALL).groups()
+        strategy, queries_block = re.match(r"<strategy>(.+)</strategy>\s*<queries>(.+)</queries>", response_text, re.DOTALL).groups()
         queries = []
         for query_line in queries_block.splitlines():
             try:
@@ -370,7 +370,7 @@ async def get_deck_advice(decklist_text, format=None, additional_info=None):
     decklist_cards = await extract_card_names(decklist_text)
     card_descriptions = await get_card_descriptions_dict(decklist_cards)
         
-    system_prompt = f"""You are an expert Magic: The Gathering deck builder and advisor.
+    dev_prompt = f"""You are an expert Magic: The Gathering deck builder and advisor.
     You will be given a decklist, along with descriptions of the cards in the deck.
     Read the decklist and card descriptions carefully, noting card quantities when relevant and considering the reason each card is in the deck.
     Your task is to analyze the deck's strategy and provide specific advice on how to improve it.
@@ -381,13 +381,13 @@ async def get_deck_advice(decklist_text, format=None, additional_info=None):
     """
     
     decklist_descriptions_text = '\n'.join([f"<card>\n{card_descriptions[name]}\n</card>" for name in decklist_cards])
-    user_prompt = f"""<decklist-card-descriptions>
-    {decklist_descriptions_text}
-    </decklist-card-descriptions>
-    
-    <decklist>
+    user_prompt = f"""<decklist>
     {decklist_text}
     </decklist>
+    
+    <decklist-card-descriptions>
+    {decklist_descriptions_text}
+    </decklist-card-descriptions>
     """
     
     if format:
@@ -408,7 +408,7 @@ async def get_deck_advice(decklist_text, format=None, additional_info=None):
     response = await openai.chat.completions.create(
         model=GOOD_MODEL,
         messages=[
-            {"role": "developer", "content": system_prompt},
+            {"role": "developer", "content": dev_prompt},
             {"role": "user", "content": user_prompt}
         ]
     )
