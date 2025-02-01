@@ -111,29 +111,33 @@ async def get_card_descriptions_dict(card_names):
                 cards_to_get.append(name)
         
         # Generate missing descriptions
+        errors = []
         if cards_to_get:
             logger.debug(f"Getting {len(cards_to_get)} new descriptions")
             new_descriptions = []
             async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as session:
                 tasks = []
                 for name in cards_to_get:
-                    tasks.append(asyncio.create_task(fetch_card_description(session, name)))
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                for name, result in zip(cards_to_get, results):
-                    if isinstance(result, Exception):
-                        logger.error(f"Error searching Scryfall for card '{name}': {str(result)}")
+                    try:
+                        result = await fetch_card_description(session, name)
+                        descriptions[name] = result
+                        new_descriptions.append({
+                            "name": name,
+                            "description": result
+                        })
+                        await asyncio.sleep(0.1) # Be polite to Scryfall
+                    except Exception as e:
+                        logger.error(f"Error searching Scryfall for card '{name}': {str(e)}")
+                        errors.append(name)
                         continue
-                    descriptions[name] = result
-                    new_descriptions.append({
-                        "name": name,
-                        "description": result
-                    })
             
             # Store new descriptions in bulk
             if new_descriptions:
                 logger.debug(f"Storing {len(new_descriptions)} new descriptions in database")
                 cards.insert_many(new_descriptions)
+            
+        for name in errors:
+            descriptions[name] = f"{name} - ERROR GETTING DESCRIPTION"
     
     return descriptions
 
