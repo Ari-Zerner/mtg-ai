@@ -269,6 +269,7 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
     Ensure that each query is restricted to legal cards, considering restrictions such as color identity (`id<=[color identity]`).
     Be sure to consider any additional information provided, and how it should affect both your description of the deck's strategy and the search queries.
     Try to keep your queries specific; only the first {MAX_CARDS_PER_QUERY} cards returned by each query will be considered.
+    Make a variety of queries, so that the deck builder can find what they need to fill different niches in the deck's strategy.
     
     Your output should be delineated with XML tags as follows:
     <strategy>
