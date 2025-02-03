@@ -1,7 +1,6 @@
 from flask import Flask, request, render_template, jsonify
 import mtgai
 import markdown
-import asyncio
 import time
 import uuid
 import threading
@@ -23,7 +22,7 @@ app = Flask(__name__)
 
 @app.route('/', methods=['GET'])
 def index():
-    formats = asyncio.run(mtgai.get_format_list())
+    formats = mtgai.get_format_list()
     return render_template('index.html', formats=formats)
 
 @app.route('/', methods=['POST'])
@@ -43,7 +42,7 @@ def submit_deck():
             jobs[job_id]["progress"].append(message)
         try:
             # The get_deck_advice function now takes a progress_callback
-            advice = asyncio.run(mtgai.get_deck_advice(decklist, format=format_value, additional_info=additional_info, progress_callback=progress_update))
+            advice = mtgai.get_deck_advice(decklist, format=format_value, additional_info=additional_info, progress_callback=progress_update)
             decklist_section = f"## Decklist\n{decklist}"
             additional_info_section = f"## Additional Info\n{additional_info}" if additional_info.strip() else ""
             format_section = f"## Format\n{format_value}" if format_value.strip() else ""
