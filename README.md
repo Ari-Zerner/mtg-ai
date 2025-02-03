@@ -44,6 +44,7 @@ GOOD_MODEL # Model for complex analysis
 MONGO_URI # MongoDB connection string
 
 # Optional configuration
+LOG_LEVEL # Logging level (default: INFO)
 MAX_CARDS_PER_QUERY # Maximum number of cards to fetch per Scryfall query (default: 525)
 MAX_CARDS_TO_CONSIDER # Maximum number of most-relevant potential additions to consider (default: 150)
 MIN_RELEVANCE_SCORE # Minimum relevance score for suggestions (default: 50)
