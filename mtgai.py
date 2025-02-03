@@ -35,7 +35,9 @@ logger.info("Loading environment variables")
 CHEAP_MODEL = env_var("CHEAP_MODEL")
 GOOD_MODEL = env_var("GOOD_MODEL")
 MONGO_URI = env_var("MONGO_URI")
-MAX_CARDS_PER_QUERY = int(env_var("MAX_CARDS_PER_QUERY"))
+MAX_CARDS_PER_QUERY = int(env_var("MAX_CARDS_PER_QUERY", '525'))
+MAX_CARDS_TO_CONSIDER = int(env_var("MAX_CARDS_TO_CONSIDER", '150'))
+MIN_RELEVANCE_SCORE = int(env_var("MIN_RELEVANCE_SCORE", '50'))
 
 openai_client = OpenAI(api_key=env_var("API_KEY"), base_url=env_var("API_BASE_URL"))
 
@@ -357,7 +359,7 @@ def get_potential_additions(current_deck_prompt, current_deck_cards, format=None
     # Build final descriptions string with sorted cards
     descriptions = []
     for card_name, relevance in sorted_cards:
-        if len(descriptions) > 150 or relevance < 50:
+        if len(descriptions) > MAX_CARDS_TO_CONSIDER or relevance < MIN_RELEVANCE_SCORE:
             break
         if card_name in descriptions_dict:
             descriptions.append(descriptions_dict[card_name])
