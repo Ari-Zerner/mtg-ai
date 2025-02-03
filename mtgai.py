@@ -248,7 +248,7 @@ async def get_scryfall_syntax_reference():
         logger.error(f"Error downloading Scryfall syntax reference: {e}")
         return ""
 
-async def get_potential_additions(current_deck_prompt, current_deck_cards, format=None):
+async def get_potential_additions(current_deck_prompt, current_deck_cards, format=None, progress_callback=None):
     """
     Gets potential additions to a decklist by asking GPT to generate Scryfall search queries for cards that would be good additions, executing those queries against the Scryfall API, and enriching the results with card descriptions.
 
@@ -287,6 +287,8 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
     </scryfall-syntax-reference>
     """
     logger.info("Generating potential additions to decklist")
+    if progress_callback:
+        progress_callback("Analyzing deck strategy to find potential additions...")
     
     response = await call_ai(GOOD_MODEL, dev_prompt, current_deck_prompt)
     logger.debug(f"Received response: {response}")
@@ -307,10 +309,15 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
     
     cards = {}
     
+    if progress_callback:
+        progress_callback(f"Generated {len(queries)} search queries for potential additions")
+    
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as session:
         tasks = []
         for query_line in queries:
             tasks.append(asyncio.create_task(fetch_scryfall_search(session, query_line)))
+        if progress_callback:
+            progress_callback("Searching Scryfall for potential additions...")
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for query_line, result in zip(queries, results):
@@ -327,6 +334,8 @@ async def get_potential_additions(current_deck_prompt, current_deck_cards, forma
     card_names = list(cards.keys())
     descriptions_dict = await get_card_descriptions_dict(card_names)
     
+    if progress_callback:
+        progress_callback(f"Evaluating {len(card_names)} potential additions...")
     # Sort cards by relevance using evaluate_potential_addition
     eval_tasks = [asyncio.create_task(evaluate_potential_addition(strategy, descriptions_dict[card_name])) for card_name in card_names]
     relevance_scores = await asyncio.gather(*eval_tasks)
@@ -357,36 +366,31 @@ async def fetch_scryfall_search(session, query):
     logger.debug(f"Found {len(all_cards)} cards matching query: {query}")
     return all_cards[:MAX_CARDS_PER_QUERY]
 
-async def get_deck_advice(decklist_text, format=None, additional_info=None):
+async def get_deck_advice(decklist_text, format=None, additional_info=None, progress_callback=None):
     """
     Gets AI advice on how to improve a decklist by first enriching it with card descriptions
     and then asking for recommendations.
     
     Args:
         decklist_text (str): Raw decklist text containing card names and other info
+        format (str): The deck's format, if specified
+        additional_info (str): Any additional contextual information
+        progress_callback (callable, optional): Callback to report progress messages.
         
     Returns:
         str: AI advice on improving the deck
-        
-    Raises:
-        openai.OpenAIError: If any OpenAI API requests fail
-        aiohttp.ClientError: If any Scryfall API requests fail
-        ValueError: If no cards are found
     """
     logger.info("Getting deck improvement advice")
-    # First get descriptions for all cards
-    decklist_cards = await extract_card_names(decklist_text)
-    card_descriptions = await get_card_descriptions_dict(decklist_cards)
+    if progress_callback:
+        progress_callback("Starting deck analysis...")
         
-    dev_prompt = f"""You are an expert Magic: The Gathering deck builder and advisor.
-    You will be given a decklist, along with descriptions of the cards in the deck.
-    Read the decklist and card descriptions carefully, noting card quantities when relevant and considering the reason each card is in the deck.
-    Your task is to analyze the deck's strategy and provide specific advice on how to improve it.
-    Consider aspects like mana curve, overall gameplan, synergies between cards, and potential weaknesses.
-    Unless instrtucted otherwise, aim to balance suggestions for cutting and adding cards so that the size of the deck doesn't change.
-    Provide reasoning for your suggestions so that players can learn from your advice.
-    Make sure your output is properly formatted markdown.
-    """
+    # Step 1: Extract card names from decklist
+    decklist_cards = await extract_card_names(decklist_text)
+    
+    # Step 2: Get card descriptions
+    card_descriptions = await get_card_descriptions_dict(decklist_cards)
+    if progress_callback:
+        progress_callback("Fetched card descriptions for decklist.")
     
     decklist_descriptions_text = '\n'.join([f"<card>\n{card_descriptions[name]}\n</card>" for name in decklist_cards])
     user_prompt = f"""<decklist>
@@ -407,12 +411,25 @@ async def get_deck_advice(decklist_text, format=None, additional_info=None):
     if additional_info:
         user_prompt += f"\n\n<additional-info>\n{additional_info}\n</additional-info>"
     
-    potential_additions = await get_potential_additions(user_prompt, decklist_cards)
+    # Step 3: Generate potential additions to the deck
+    potential_additions = await get_potential_additions(user_prompt, decklist_cards, format=format, progress_callback=progress_callback)
+        
     if potential_additions:
         addition_descriptions_text = '\n'.join([f"<card>\n{card}\n</card>" for card in potential_additions])
         user_prompt += f"\n\n<potential-additions>\n{addition_descriptions_text}\n</potential-additions>"
     
-    logger.debug("Making OpenAI API call for deck advice")
+    # Step 4: Request final AI deck advice
+    dev_prompt = """You are an expert Magic: The Gathering deck builder and advisor.
+    You will be given a decklist, along with descriptions of the cards in the deck.
+    Read the decklist and card descriptions carefully, noting card quantities when relevant and considering the reason each card is in the deck.
+    Your task is to analyze the deck's strategy and provide specific advice on how to improve it.
+    Consider aspects like mana curve, overall gameplan, synergies between cards, and potential weaknesses.
+    Unless instrtucted otherwise, aim to balance suggestions for cutting and adding cards so that the size of the deck doesn't change.
+    Provide reasoning for your suggestions so that players can learn from your advice.
+    Make sure your output is properly formatted markdown.
+    """
+    if progress_callback:
+        progress_callback("Generating overall deck advice...")
     response = await call_ai(GOOD_MODEL, dev_prompt, user_prompt)
-    logger.debug("Successfully received deck advice from OpenAI")
+        
     return response

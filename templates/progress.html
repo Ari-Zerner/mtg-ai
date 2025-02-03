@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Deck Analysis Progress</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      
+      h1 {
+        color: #333;
+        margin-bottom: 30px;
+      }
+      
+      #progress {
+        font-family: monospace;
+        white-space: pre-wrap;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 20px;
+        margin: 20px 0;
+        background: #f9f9f9;
+        min-height: 100px;
+      }
+      
+      #error {
+        display: none;
+        color: #721c24;
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        border-radius: 4px;
+        padding: 15px;
+        margin: 20px 0;
+      }
+      
+      .loading-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border: 2px solid #ccc;
+        border-radius: 50%;
+        border-top-color: #333;
+        animation: spin 1s linear infinite;
+        margin-left: 10px;
+      }
+      
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Analyzing Deck<span class="loading-indicator"></span></h1>
+    <div id="progress">Starting analysis...</div>
+    <div id="error">
+      An error occurred while checking the analysis status. 
+      <a href="/report/{{ job_id }}">Click here</a> to try viewing the report, 
+      or refresh this page to try again.
+    </div>
+    
+    <script>
+      let errorCount = 0;
+      
+      function showError() {
+        document.getElementById('error').style.display = 'block';
+      }
+      
+      function pollStatus() {
+        fetch("/status/{{ job_id }}")
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+          })
+          .then(data => {
+            document.getElementById("progress").innerText = data.progress.join("\n");
+            if (data.completed) {
+              window.location.href = "/report/{{ job_id }}";
+            } else {
+              setTimeout(pollStatus, 1000);
+            }
+            // Reset error count on successful request
+            errorCount = 0;
+          })
+          .catch(error => {
+            console.error('Error:', error);
+            errorCount++;
+            if (errorCount >= 3) {
+              showError();
+            } else {
+              setTimeout(pollStatus, 1000);
+            }
+          });
+      }
+      
+      pollStatus();
+    </script>
+  </body>
+</html>
