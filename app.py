@@ -33,12 +33,14 @@ def submit_deck():
     
     # Create a unique job id and record initial progress
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {"progress": ["Started. Report ID: " + job_id], "completed": False, "result": None, "timestamp": time.time()}
+    jobs[job_id] = {"progress": ["Report ID: " + job_id], "completed": False, "result": None, "timestamp": time.time()}
     
     # Background thread to run deck analysis
     def run_job(job_id, decklist, format_value, additional_info):
         # Define progress callback to update job progress
-        def progress_update(message):
+        def progress_update(message, is_update=False):
+            if is_update:
+                jobs[job_id]["progress"].pop()
             jobs[job_id]["progress"].append(message)
         try:
             # The get_deck_advice function now takes a progress_callback

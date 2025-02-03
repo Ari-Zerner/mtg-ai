@@ -71,7 +71,7 @@ def fetch_card_description(session, name):
     response.raise_for_status()
     return response.text
 
-def get_card_descriptions_dict(card_names):
+def get_card_descriptions_dict(card_names, progress_callback=None):
     """
     Get natural language descriptions of Magic cards' functional aspects,
     first checking MongoDB in bulk and falling back to Scryfall+AI for missing cards.
@@ -90,7 +90,9 @@ def get_card_descriptions_dict(card_names):
     logger.info(f"Getting descriptions for {len(card_names)} cards")
     
     descriptions = {}
-    cards_to_get = []
+    
+    if progress_callback:
+        progress_callback(f"0/{len(card_names)} descriptions loaded")
     
     # Try to load from database first
     with pymongo.MongoClient(MONGO_URI, tlsCAFile=certifi.where()) as db:
@@ -103,10 +105,16 @@ def get_card_descriptions_dict(card_names):
         
         logger.debug(f"Found {len(existing_dict)} existing descriptions in database")
         
+        cards_loaded = 0
+        
         # Add existing descriptions and collect missing cards
+        cards_to_get = []
         for name in card_names:
             if name in existing_dict:
                 descriptions[name] = existing_dict[name]
+                cards_loaded += 1
+                if progress_callback:
+                    progress_callback(f"{cards_loaded}/{len(card_names)} descriptions loaded", is_update=True)
             else:
                 cards_to_get.append(name)
         
@@ -120,6 +128,9 @@ def get_card_descriptions_dict(card_names):
                 try:
                     result = fetch_card_description(session, name)
                     descriptions[name] = result
+                    cards_loaded += 1
+                    if progress_callback:
+                        progress_callback(f"{cards_loaded}/{len(card_names)} descriptions loaded", is_update=True)
                     new_descriptions.append({
                         "name": name,
                         "description": result
@@ -287,7 +298,7 @@ def get_potential_additions(current_deck_prompt, current_deck_cards, format=None
     """
     logger.info("Generating potential additions to decklist")
     if progress_callback:
-        progress_callback("Analyzing deck strategy to find potential additions...")
+        progress_callback("Analyzing deck strategy...")
     
     response = call_ai(GOOD_MODEL, dev_prompt, current_deck_prompt)
     logger.debug(f"Received response: {response}")
@@ -308,12 +319,11 @@ def get_potential_additions(current_deck_prompt, current_deck_cards, format=None
     
     cards = {}
     
-    if progress_callback:
-        progress_callback(f"Generated {len(queries)} search queries for potential additions")
-    
     session = requests.Session()
     
-    for query_line in queries:
+    if progress_callback:
+        progress_callback(f"Searching Scryfall for potential additions... 0/{len(queries)} queries complete")
+    for i, query_line in enumerate(queries):
         try:
             result = fetch_scryfall_search(session, query_line)
             if result:
@@ -321,21 +331,27 @@ def get_potential_additions(current_deck_prompt, current_deck_cards, format=None
         except Exception as e:
             logger.error(f"Error running query '{query_line}': {str(e)}")
             continue
-            
-    if progress_callback:
-        progress_callback("Searching Scryfall for potential additions...")
-    
+        if progress_callback:
+            progress_callback(f"Searching Scryfall for potential additions... {i+1}/{len(queries)} queries complete", is_update=True)
+        
     for name in current_deck_cards:
         if name in cards:
             del cards[name]
             
     card_names = list(cards.keys())
-    descriptions_dict = get_card_descriptions_dict(card_names)
+    
+    def update_card_descriptions_progress(msg, is_update=False):
+        progress_callback(f"Loading descriptions of potential additions... {msg}", is_update)
+    descriptions_dict = get_card_descriptions_dict(card_names, progress_callback=update_card_descriptions_progress if progress_callback else None)
     
     if progress_callback:
-        progress_callback(f"Evaluating {len(card_names)} potential additions...")
-    # Sort cards by relevance using evaluate_potential_addition
-    relevance_scores = [evaluate_potential_addition(strategy, descriptions_dict[card_name]) for card_name in card_names]
+        progress_callback(f"Evaluating potential additions... 0/{len(card_names)} cards evaluated")
+    relevance_scores = []
+    for i, card_name in enumerate(card_names):
+        relevance_scores.append(evaluate_potential_addition(strategy, descriptions_dict[card_name]))
+        if progress_callback:
+            progress_callback(f"Evaluating potential additions... {i+1}/{len(card_names)} cards evaluated", is_update=True)
+            
     sorted_cards = sorted(zip(card_names, relevance_scores), key=lambda x: x[1], reverse=True)
     
     # Build final descriptions string with sorted cards
@@ -378,16 +394,17 @@ def get_deck_advice(decklist_text, format=None, additional_info=None, progress_c
         str: AI advice on improving the deck
     """
     logger.info("Getting deck improvement advice")
+    
     if progress_callback:
-        progress_callback("Starting deck analysis...")
+        progress_callback("Reading decklist...")
         
     # Step 1: Extract card names from decklist
     decklist_cards = extract_card_names(decklist_text)
     
     # Step 2: Get card descriptions
-    card_descriptions = get_card_descriptions_dict(decklist_cards)
-    if progress_callback:
-        progress_callback("Fetched card descriptions for decklist.")
+    def update_card_descriptions_progress(msg, is_update=False):
+        progress_callback(f"Loading decklist card descriptions... {msg}", is_update)
+    card_descriptions = get_card_descriptions_dict(decklist_cards, progress_callback=update_card_descriptions_progress if progress_callback else None)
     
     decklist_descriptions_text = '\n'.join([f"<card>\n{card_descriptions[name]}\n</card>" for name in decklist_cards])
     user_prompt = f"""<decklist>
