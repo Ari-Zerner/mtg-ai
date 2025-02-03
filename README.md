@@ -41,9 +41,9 @@ API_KEY # API key for your LLM provider
 API_BASE_URL # API base URL for your LLM provider
 CHEAP_MODEL # Model for basic tasks
 GOOD_MODEL # Model for complex analysis
-MONGO_URI # MongoDB connection string
 
 # Optional configuration
+MONGO_URI # MongoDB connection string, for caching Scryfall results
 LOG_LEVEL # Logging level (default: INFO)
 MAX_CARDS_PER_QUERY # Maximum number of cards to fetch per Scryfall query (default: 525)
 MAX_CARDS_TO_CONSIDER # Maximum number of most-relevant potential additions to consider (default: 150)

@@ -34,7 +34,10 @@ def env_var(name, default=None):
 logger.info("Loading environment variables")
 CHEAP_MODEL = env_var("CHEAP_MODEL")
 GOOD_MODEL = env_var("GOOD_MODEL")
-MONGO_URI = env_var("MONGO_URI")
+MONGO_URI = env_var("MONGO_URI", "NO_MONGO")
+if MONGO_URI == "NO_MONGO":
+    logger.warning("MongoDB is not configured, descriptions will not be saved")
+    MONGO_URI = None
 MAX_CARDS_PER_QUERY = int(env_var("MAX_CARDS_PER_QUERY", '525'))
 MAX_CARDS_TO_CONSIDER = int(env_var("MAX_CARDS_TO_CONSIDER", '150'))
 MIN_RELEVANCE_SCORE = int(env_var("MIN_RELEVANCE_SCORE", '50'))
@@ -96,60 +99,76 @@ def get_card_descriptions_dict(card_names, progress_callback=None):
     if progress_callback:
         progress_callback(f"0/{len(card_names)} descriptions loaded")
     
-    # Try to load from database first
-    with pymongo.MongoClient(MONGO_URI, tlsCAFile=certifi.where()) as db:
-        # Get the cards collection
-        cards = db.mtgai.cards
-        
-        # Find all existing cards in one query
-        existing_cards = list(cards.find({"name": {"$in": card_names}}))
-        existing_dict = {card["name"]: card["description"] for card in existing_cards}
-        
-        logger.debug(f"Found {len(existing_dict)} existing descriptions in database")
-        
-        cards_loaded = 0
-        
-        # Add existing descriptions and collect missing cards
-        cards_to_get = []
-        for name in card_names:
-            if name in existing_dict:
-                descriptions[name] = existing_dict[name]
-                cards_loaded += 1
-                if progress_callback:
-                    progress_callback(f"{cards_loaded}/{len(card_names)} descriptions loaded", is_update=True)
-            else:
-                cards_to_get.append(name)
-        
-        # Generate missing descriptions
-        errors = []
-        if cards_to_get:
-            logger.debug(f"Getting {len(cards_to_get)} new descriptions")
-            new_descriptions = []
-            session = requests.Session()
-            for name in cards_to_get:
-                try:
-                    result = fetch_card_description(session, name)
-                    descriptions[name] = result
+    if MONGO_URI:
+        # Load cached descriptions from database
+        with pymongo.MongoClient(MONGO_URI, tlsCAFile=certifi.where()) as db:
+            # Get the cards collection
+            cards = db.mtgai.cards
+            
+            # Find all existing cards in one query
+            existing_cards = list(cards.find({"name": {"$in": card_names}}))
+            existing_dict = {card["name"]: card["description"] for card in existing_cards}
+            
+            logger.debug(f"Found {len(existing_dict)} existing descriptions in database")
+            
+            cards_loaded = 0
+            
+            # Add existing descriptions and collect missing cards
+            cards_to_get = []
+            for name in card_names:
+                if name in existing_dict:
+                    descriptions[name] = existing_dict[name]
                     cards_loaded += 1
                     if progress_callback:
                         progress_callback(f"{cards_loaded}/{len(card_names)} descriptions loaded", is_update=True)
-                    new_descriptions.append({
-                        "name": name,
-                        "description": result
-                    })
-                    time.sleep(0.1) # Be polite to Scryfall
-                except Exception as e:
-                    logger.error(f"Error searching Scryfall for card '{name}': {str(e)}")
-                    errors.append(name)
-                    continue
+                else:
+                    cards_to_get.append(name)
             
-            # Store new descriptions in bulk
-            if new_descriptions:
-                logger.debug(f"Storing {len(new_descriptions)} new descriptions in database")
-                cards.insert_many(new_descriptions)
-            
-        for name in errors:
-            descriptions[name] = f"{name} - ERROR GETTING DESCRIPTION"
+            # Get missing descriptions from Scryfall
+            errors = []
+            if cards_to_get:
+                logger.debug(f"Getting {len(cards_to_get)} new descriptions")
+                new_descriptions = []
+                session = requests.Session()
+                for name in cards_to_get:
+                    try:
+                        result = fetch_card_description(session, name)
+                        descriptions[name] = result
+                        cards_loaded += 1
+                        if progress_callback:
+                            progress_callback(f"{cards_loaded}/{len(card_names)} descriptions loaded", is_update=True)
+                        new_descriptions.append({
+                            "name": name,
+                            "description": result
+                        })
+                        time.sleep(0.1) # Be polite to Scryfall
+                    except Exception as e:
+                        logger.error(f"Error searching Scryfall for card '{name}': {str(e)}")
+                        errors.append(name)
+                        continue
+                
+                # Store new descriptions in bulk
+                if new_descriptions:
+                    logger.debug(f"Storing {len(new_descriptions)} new descriptions in database")
+                    cards.insert_many(new_descriptions)
+                
+            for name in errors:
+                descriptions[name] = f"{name} - ERROR GETTING DESCRIPTION"
+    else:
+        # No database, fetch all descriptions from Scryfall
+        # TODO: de-duplicate code
+        session = requests.Session()
+        for i, name in enumerate(card_names):
+            try:
+                result = fetch_card_description(session, name)
+                descriptions[name] = result
+                if progress_callback:
+                    progress_callback(f"{i+1}/{len(card_names)} descriptions loaded", is_update=True)
+                time.sleep(0.1) # Be polite to Scryfall
+            except Exception as e:
+                logger.error(f"Error searching Scryfall for card '{name}': {str(e)}")
+                descriptions[name] = f"{name} - ERROR GETTING DESCRIPTION"
+                continue
     
     return descriptions
 
