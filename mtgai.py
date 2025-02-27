@@ -32,8 +32,10 @@ def env_var(name, default=None):
     return value
 
 logger.info("Loading environment variables")
+openai_client = OpenAI(api_key=env_var("API_KEY"), base_url=env_var("API_BASE_URL"))
 CHEAP_MODEL = env_var("CHEAP_MODEL")
 GOOD_MODEL = env_var("GOOD_MODEL")
+TOP_LEVEL_ROLE = env_var("TOP_LEVEL_ROLE", "developer")
 MONGO_URI = env_var("MONGO_URI", "NO_MONGO")
 if MONGO_URI == "NO_MONGO":
     logger.warning("MongoDB is not configured, descriptions will not be saved")
@@ -42,14 +44,12 @@ MAX_CARDS_PER_QUERY = int(env_var("MAX_CARDS_PER_QUERY", '525'))
 MAX_CARDS_TO_CONSIDER = int(env_var("MAX_CARDS_TO_CONSIDER", '150'))
 MIN_RELEVANCE_SCORE = int(env_var("MIN_RELEVANCE_SCORE", '50'))
 
-openai_client = OpenAI(api_key=env_var("API_KEY"), base_url=env_var("API_BASE_URL"))
-
 def call_ai(model, dev_prompt, user_prompt):
     try:
         response = openai_client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "developer", "content": dev_prompt},
+                {"role": TOP_LEVEL_ROLE, "content": dev_prompt},
                 {"role": "user", "content": user_prompt}
             ]
         )
