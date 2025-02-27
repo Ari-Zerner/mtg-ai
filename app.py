@@ -72,11 +72,20 @@ def status(job_id):
 
 @app.route('/report/<job_id>', methods=['GET'])
 def get_report(job_id):
-    if job_id in jobs and jobs[job_id]["completed"]:
-        result = jobs[job_id]["result"]
-        return render_template('report.html', content_html=result["content_html"], content_md=result["content_md"])
-    else:
+    if job_id not in jobs:
+        return "Job not found.", 404
+    
+    if not jobs[job_id]["completed"]:
         return "Job still in progress. Please refresh later.", 202
+    
+    result = jobs[job_id]["result"]
+    if result is None:
+        # Handle the case where the job completed with an error
+        error_messages = [msg for msg in jobs[job_id]["progress"] if "Error encountered:" in msg]
+        error_message = error_messages[-1] if error_messages else "An unknown error occurred"
+        return render_template('error.html', error_message=error_message)
+    
+    return render_template('report.html', content_html=result["content_html"], content_md=result["content_md"])
 
 if __name__ == '__main__':
     app.run(debug=True)
