@@ -1,3 +1,4 @@
+import json
 from openai import OpenAI, BadRequestError
 from dotenv import load_dotenv
 import os
@@ -44,6 +45,7 @@ MAX_CARDS_PER_QUERY = int(env_var("MAX_CARDS_PER_QUERY", '525'))
 MAX_CARDS_TO_CONSIDER = int(env_var("MAX_CARDS_TO_CONSIDER", '150'))
 MIN_RELEVANCE_SCORE = int(env_var("MIN_RELEVANCE_SCORE", '50'))
 
+# TODO use session to avoid overhead? Might already be handled by openai_client
 def call_ai(model, dev_prompt, user_prompt):
     try:
         response = openai_client.chat.completions.create(
@@ -200,32 +202,39 @@ def extract_card_names(decklist_text):
     logger.debug(f"Extracted {len(card_names)} card names from decklist")
     return card_names
 
-def evaluate_potential_addition(strategy, card_description):
+def evaluate_potential_additions(strategy, card_descriptions):
     """
-    Evaluates a potential card addition by considering the deck's strategy and the card's description.
+    Evaluates multiple potential card additions by considering the deck's strategy and the cards' descriptions.
     
     Args:
         strategy (str): The deck's strategy
-        card_description (str): The card's description
+        card_descriptions (dict): Dictionary mapping card names to their descriptions
         
     Returns:
-        int: A score from 1 to 100 indicating the card's potential usefulness to the deck
+        dict: Dictionary mapping card names to scores (1-100) indicating each card's potential usefulness
     """
     dev_prompt = """You are an expert Magic: The Gathering deck builder and advisor.
-    You will be given a deck's strategy and a card's description.
-    Read the deck's strategy and the card's description carefully.
-    Your task is to rate the card's potential usefulness to the deck, on a scale of 1 (worst) to 100 (best).
-    Consider both the card's overall strength and how well it synergizes with the deck's strategy.
-    Output your score as an integer with no other text.
+    You will be given a deck's strategy and multiple card descriptions.
+    Read the deck's strategy and each card's description carefully.
+    Your task is to rate each card's potential usefulness to the deck, on a scale of 1 (worst) to 100 (best).
+    Consider both each card's overall strength and how well it synergizes with the deck's strategy.
+    Output your response as a JSON object mapping card names to integer scores.
+    Example output format:
+    {
+        "Card Name 1": 85,
+        "Card Name 2": 45
+    }
     """
     try:
-        logger.debug(f"Evaluating potential addition: {card_description.splitlines()[0]}")
-        user_prompt = f"<strategy>\n{strategy}\n</strategy>\n<card description>\n{card_description}\n</card description>"   
-        response = call_ai(CHEAP_MODEL, dev_prompt, user_prompt)
-        return int(response)
+        logger.debug(f"Evaluating {len(card_descriptions)} potential additions")
+        cards_text = "\n".join(f"{name}:\n{desc}" for name, desc in card_descriptions.items())
+        user_prompt = f"<strategy>\n{strategy}\n</strategy>\n<cards>\n{cards_text}\n</cards>"
+        response = call_ai(GOOD_MODEL, dev_prompt, user_prompt)
+        scores = json.loads(response)  # Parse response as JSON
+        return scores
     except Exception as e:
-        logger.error(f"Error evaluating potential addition {card_description.splitlines()[0]}: {e}")
-        return 0
+        logger.error(f"Error evaluating potential additions: {e}")
+        return {name: 0 for name in card_descriptions.keys()}
 
 FORMAT_LIST = None
 def get_format_list():
@@ -366,14 +375,10 @@ def get_potential_additions(current_deck_prompt, current_deck_cards, format=None
     descriptions_dict = get_card_descriptions_dict(card_names, progress_callback=update_card_descriptions_progress if progress_callback else None)
     
     if progress_callback:
-        progress_callback(f"Evaluating potential additions... 0/{len(card_names)} cards evaluated")
-    relevance_scores = []
-    for i, card_name in enumerate(card_names):
-        relevance_scores.append(evaluate_potential_addition(strategy, descriptions_dict[card_name]))
-        if progress_callback:
-            progress_callback(f"Evaluating potential additions... {i+1}/{len(card_names)} cards evaluated", is_update=True)
-            
-    sorted_cards = sorted(zip(card_names, relevance_scores), key=lambda x: x[1], reverse=True)
+        progress_callback("Evaluating potential additions...")
+        
+    relevance_scores = evaluate_potential_additions(strategy, descriptions_dict)
+    sorted_cards = sorted(relevance_scores.items(), key=lambda x: x[1], reverse=True)
     
     # Build final descriptions string with sorted cards
     descriptions = []
